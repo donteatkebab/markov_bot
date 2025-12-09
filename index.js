@@ -176,6 +176,19 @@ setInterval(async () => {
   }
 }, 60 * 1000)
 
+const http = require('http')
+
+const PORT = process.env.PORT || 3000
+
+http
+  .createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.end('OK\n')
+  })
+  .listen(PORT, () => {
+    console.log('HTTP server listening on port', PORT)
+  })
+
 
 bot.launch().then(() => {
   console.log('🤖 Bot started...')
