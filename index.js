@@ -49,13 +49,13 @@ bot.catch((err, ctx) => {
 })
 
 // ---- /markov command ----
-bot.command('markov', async (ctx) => {
+bot.command('bitch', async (ctx) => {
   if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
   const sentence = await generateRandom(ctx.chat.id, 25)
 
   if (!sentence) {
-    safeSend(ctx.chat.id, 'یکم بیشتر حرف بزنین تا یاد بگیرم.')
+    safeSend(ctx.chat.id, 'یکم بیشتر کصشر بگین تا یاد بگیرم.')
     return
   }
 
@@ -68,7 +68,6 @@ bot.on('text', async (ctx) => {
   const msg = ctx.message
   const text = msg.text
   if (!text) return
-  if (msg.from && msg.from.is_bot) return
 
   if (chat.type === 'group' || chat.type === 'supergroup') {
     knownGroups.add(chat.id)
@@ -111,7 +110,7 @@ setInterval(async () => {
   } catch (err) {
     console.error('failed to send random message', err.message)
   }
-}, 60 * 1000)
+}, 90 * 1000)
 
 // ---- HTTP server for Koyeb ----
 const http = require('http')
