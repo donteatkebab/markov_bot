@@ -1,5 +1,6 @@
 require('dotenv').config()
 const { Telegraf } = require('telegraf')
+const cron = require('node-cron')
 
 // ---- MongoDB integration ----
 const { initDb, addMessage, generateRandom } = require('./markov')
@@ -29,13 +30,15 @@ async function processQueue() {
   isSending = false
 }
 
-setInterval(processQueue, 1000)
+// process up to ~2 messages per second (safe global rate)
+setInterval(processQueue, 500)
 
 function safeSend(chatId, text, replyTo = null) {
   sendQueue.push({ chatId, text, replyTo })
 }
 
 const knownGroups = new Set()
+const lastMessageTime = new Map()
 
 if (!process.env.BOT_TOKEN) {
   throw new Error('BOT_TOKEN is not set in environment variables')
@@ -49,7 +52,7 @@ bot.catch((err, ctx) => {
 })
 
 // ---- /markov command ----
-bot.command('bitch', async (ctx) => {
+bot.command('ginderella', async (ctx) => {
   if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
   const sentence = await generateRandom(ctx.chat.id, 25)
@@ -77,6 +80,9 @@ bot.on('text', async (ctx) => {
 
     await addMessage(chat.id, text)
 
+    // Update last message time for this group
+    lastMessageTime.set(chat.id, Date.now())
+
     const isReplyToBot =
       msg.reply_to_message &&
       msg.reply_to_message.from &&
@@ -99,8 +105,19 @@ setInterval(async () => {
   const shouldSpeak = Math.random() < 0.2
   if (!shouldSpeak) return
 
-  const groups = Array.from(knownGroups)
-  const randomChatId = groups[Math.floor(Math.random() * groups.length)]
+  // Filter out inactive groups (15 minutes = 15 * 60 * 1000)
+  const activeGroups = Array.from(knownGroups).filter((g) => {
+    const t = lastMessageTime.get(g)
+    if (!t) return false
+    return (Date.now() - t) <= 15 * 60 * 1000
+  })
+
+  if (activeGroups.length === 0) return
+
+  const randomChatId = activeGroups[Math.floor(Math.random() * activeGroups.length)]
+
+  // const groups = Array.from(knownGroups)
+  // const randomChatId = groups[Math.floor(Math.random() * groups.length)]
 
   const sentence = await generateRandom(randomChatId, 25)
   if (!sentence) return
@@ -111,6 +128,23 @@ setInterval(async () => {
     console.error('failed to send random message', err.message)
   }
 }, 90 * 1000)
+
+// ---- Daily fixed message at 00:00 Asia/Tehran ----
+const DAILY_MESSAGE = 'متاسفانه حضرت آقا خامنه ای امروز هم نمرد😩'
+
+cron.schedule(
+  '0 0 * * *',
+  () => {
+    if (knownGroups.size === 0) return
+
+    for (const chatId of knownGroups) {
+      safeSend(chatId, DAILY_MESSAGE)
+    }
+  },
+  {
+    timezone: 'Asia/Tehran',
+  }
+)
 
 // ---- HTTP server for Koyeb ----
 const http = require('http')
