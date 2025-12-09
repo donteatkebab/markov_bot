@@ -102,13 +102,13 @@ function addMessage(chatId, text) {
 }
 
 /* 🔹 اول هندلر دستور رو تعریف کن */
-bot.command('markov', async (ctx) => {
+bot.command('bitch', async (ctx) => {
   if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
   const sentence = generateRandom(ctx.chat.id, 25)
 
   if (!sentence) {
-    safeSend(ctx.chat.id, 'هنوز دیتای کافی ندارم.')
+    safeSend(ctx.chat.id, 'هنوز به یک جنده اختصاصی واسه گروه شما تبدیل نشدم🥲 لطفا در گروه بیشتر کصشر بگین.')
     return
   }
 
