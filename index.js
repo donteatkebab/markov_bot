@@ -1,6 +1,7 @@
 require('dotenv').config()
 const { Telegraf } = require('telegraf')
 const cron = require('node-cron')
+const STRINGS = require('./strings')
 
 // ---- MongoDB integration ----
 const { initDb, addMessage, generateRandom } = require('./markov')
@@ -39,6 +40,7 @@ function safeSend(chatId, text, replyTo = null) {
 
 const knownGroups = new Set()
 const lastMessageTime = new Map()
+const messageCountSinceRandom = new Map()
 
 if (!process.env.BOT_TOKEN) {
   throw new Error('BOT_TOKEN is not set in environment variables')
@@ -52,13 +54,13 @@ bot.catch((err, ctx) => {
 })
 
 // ---- /markov command ----
-bot.command('ginderella', async (ctx) => {
+bot.command('markov', async (ctx) => {
   if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
   const sentence = await generateRandom(ctx.chat.id, 25)
 
   if (!sentence) {
-    safeSend(ctx.chat.id, 'یکم بیشتر کصشر بگین تا یاد بگیرم.')
+    safeSend(ctx.chat.id, STRINGS.NEED_MORE_DATA)
     return
   }
 
@@ -72,6 +74,11 @@ bot.on('text', async (ctx) => {
   const text = msg.text
   if (!text) return
 
+  // نادیده گرفتن تمام پیام‌های ربات‌ها (ولی ادمین ناشناس بات نیست)
+  if (msg.from && msg.from.is_bot) {
+    return
+  }
+
   if (chat.type === 'group' || chat.type === 'supergroup') {
     knownGroups.add(chat.id)
 
@@ -82,6 +89,9 @@ bot.on('text', async (ctx) => {
 
     // Update last message time for this group
     lastMessageTime.set(chat.id, Date.now())
+
+    const prevCount = messageCountSinceRandom.get(chat.id) || 0
+    messageCountSinceRandom.set(chat.id, prevCount + 1)
 
     const isReplyToBot =
       msg.reply_to_message &&
@@ -105,11 +115,14 @@ setInterval(async () => {
   const shouldSpeak = Math.random() < 0.2
   if (!shouldSpeak) return
 
-  // Filter out inactive groups (15 minutes = 15 * 60 * 1000)
+  // Filter out inactive groups (15 minutes = 15 * 60 * 1000) and require >= 10 user messages since last random
   const activeGroups = Array.from(knownGroups).filter((g) => {
     const t = lastMessageTime.get(g)
     if (!t) return false
-    return (Date.now() - t) <= 15 * 60 * 1000
+    if ((Date.now() - t) > 15 * 60 * 1000) return false
+
+    const count = messageCountSinceRandom.get(g) || 0
+    return count >= 10
   })
 
   if (activeGroups.length === 0) return
@@ -124,13 +137,14 @@ setInterval(async () => {
 
   try {
     safeSend(randomChatId, sentence)
+    messageCountSinceRandom.set(randomChatId, 0)
   } catch (err) {
     console.error('failed to send random message', err.message)
   }
 }, 90 * 1000)
 
 // ---- Daily fixed message at 00:00 Asia/Tehran ----
-const DAILY_MESSAGE = 'متاسفانه حضرت آقا خامنه ای امروز هم نمرد😩'
+const DAILY_MESSAGE = STRINGS.DAILY_MESSAGE
 
 cron.schedule(
   '0 0 * * *',

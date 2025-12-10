@@ -74,33 +74,29 @@ function buildChain(messages) {
     const normalized = text.trim()
     if (!normalized) continue
 
-    // جمله‌ها را بر اساس نشانه‌های پایان جمله جدا می‌کنیم
-    const sentences = normalized
-      .split(/[.!؟?]+/g)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
+    // هر پیام را به عنوان یک جمله کامل در نظر می‌گیریم
+    const sentence = normalized
+    const words = sentence.split(/\s+/).filter(Boolean)
+    if (words.length < 3) continue
 
-    for (const sentence of sentences) {
-      const words = sentence.split(/\s+/).filter(Boolean)
-      if (words.length < 3) continue
+    // دو کلمه اول هر جمله را به عنوان شروع ذخیره می‌کنیم
+    const startKey = `${words[0]} ${words[1]}`
+    startKeys.push(startKey)
 
-      // دو کلمه اول هر جمله را به عنوان شروع ذخیره می‌کنیم
-      const startKey = `${words[0]} ${words[1]}`
-      startKeys.push(startKey)
+    for (let i = 0; i < words.length - 2; i++) {
+      const w1 = words[i]
+      const w2 = words[i + 1]
+      const w3 = words[i + 2]
 
-      for (let i = 0; i < words.length - 2; i++) {
-        const w1 = words[i]
-        const w2 = words[i + 1]
-        const w3 = words[i + 2]
+      const key = `${w1} ${w2}`
 
-        const key = `${w1} ${w2}`
-
-        if (!chain[key]) {
-          chain[key] = []
-        }
-        chain[key].push(w3)
+      if (!chain[key]) {
+        chain[key] = []
       }
+      chain[key].push(w3)
     }
+
+    continue
   }
 
   return { chain, startKeys }
