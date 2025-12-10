@@ -54,7 +54,7 @@ bot.catch((err, ctx) => {
 })
 
 // ---- /markov command ----
-bot.command('markov', async (ctx) => {
+bot.command(STRINGS.COMMAND_KEY, async (ctx) => {
   if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
   const sentence = await generateRandom(ctx.chat.id, 25)

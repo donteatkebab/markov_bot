@@ -48,10 +48,17 @@ async function addMessage(chatId, text) {
   // --- Clean text ---
   let cleaned = text
 
-  // Remove URLs
+  // Remove URLs with http/https
   cleaned = cleaned.replace(/https?:\/\/\S+/gi, '')
+
+  // Remove URLs starting with www.
   cleaned = cleaned.replace(/www\.\S+/gi, '')
-  cleaned = cleaned.replace(/\S+\.(com|net|org|ir|io|me|app)\S*/gi, '')
+
+  // Remove bare domains with common TLDs (more complete list)
+  cleaned = cleaned.replace(/\b\S+\.(com|net|org|ir|io|me|app|xyz|info|site|online|shop|top)\S*/gi, '')
+
+  // Remove Telegram-style @usernames (internal links)
+  cleaned = cleaned.replace(/@[a-zA-Z0-9_]{3,32}/g, '')
 
   // Collapse multiple spaces
   cleaned = cleaned.replace(/\s+/g, ' ').trim()
