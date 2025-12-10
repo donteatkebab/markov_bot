@@ -142,14 +142,21 @@ function generateFromChain(chain, startKeys, maxWords = 25) {
     if (!chain[currentKey]) {
       break
     }
-
-    // بعد از چند کلمه، با احتمال کمی جمله را زودتر تمام کن
-    if (i >= 5 && Math.random() < 0.25) {
-      break
-    }
   }
 
   return result.join(' ')
+}
+
+function looksGood(sentence) {
+  const s = sentence.trim()
+  if (!s) return false
+
+  const words = s.split(/\s+/)
+  if (words.length < 6) return false // خیلی کوتاه است
+
+  const last = words[words.length - 1]
+  // پایان با علائم نگارشی خوشگل
+  return /[.!؟?؛…]$/.test(last)
 }
 
 // خروجی آماده برای بات با کش per-group
@@ -177,7 +184,21 @@ async function generateRandom(chatId, maxWords = 25) {
     }
   }
 
-  return generateFromChain(cached.chain, cached.startKeys, maxWords)
+  let fallback = ''
+
+  // تا چند بار تلاش می‌کنیم جمله‌ای بسازیم که پایان مناسبی داشته باشد
+  for (let i = 0; i < 3; i++) {
+    const sentence = generateFromChain(cached.chain, cached.startKeys, maxWords)
+    if (!sentence) continue
+    fallback = sentence
+
+    if (looksGood(sentence)) {
+      return sentence
+    }
+  }
+
+  // اگر جمله‌ای با پایان خوب پیدا نشد، همان بهترین جمله را برمی‌گردانیم
+  return fallback
 }
 
 module.exports = {
