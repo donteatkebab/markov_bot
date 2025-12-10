@@ -10,7 +10,6 @@ const COLLECTION_NAME = process.env.MONGO_COLLECTION || 'groups'
 
 const client = new MongoClient(uri)
 let collection = null
-const chainCache = new Map()
 
 // اتصال به دیتابیس
 async function initDb() {
@@ -162,36 +161,20 @@ function looksGood(sentence) {
   return /[.!؟?؛…]$/.test(last)
 }
 
-// خروجی آماده برای بات با کش per-group
+// خروجی آماده برای بات (بدون کش)
 async function generateRandom(chatId, maxWords = 25) {
   const messages = await loadMessagesForChat(chatId)
   console.log('MARKOV DEBUG:', chatId, 'messages:', messages.length)
 
   if (messages.length < 5) return ''
 
-  const cacheKey = String(chatId)
-  let cached = chainCache.get(cacheKey)
-
-  // اگر کش نداریم یا تعداد پیام‌ها عوض شده، زنجیره را دوباره بساز
-  if (!cached || cached.messageCount !== messages.length) {
-    const { chain, startKeys } = buildChain(messages)
-    cached = { chain, startKeys, messageCount: messages.length }
-    chainCache.set(cacheKey, cached)
-
-    // محدود کردن اندازه کش برای جلوگیری از مصرف بیش از حد رم
-    if (chainCache.size > 100) {
-      const firstKey = chainCache.keys().next().value
-      if (firstKey !== undefined) {
-        chainCache.delete(firstKey)
-      }
-    }
-  }
+  const { chain, startKeys } = buildChain(messages)
 
   let fallback = ''
 
   // تا چند بار تلاش می‌کنیم جمله‌ای بسازیم که پایان مناسبی داشته باشد
   for (let i = 0; i < 3; i++) {
-    const sentence = generateFromChain(cached.chain, cached.startKeys, maxWords)
+    const sentence = generateFromChain(chain, startKeys, maxWords)
     if (!sentence) continue
     fallback = sentence
 

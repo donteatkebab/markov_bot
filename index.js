@@ -41,6 +41,7 @@ function safeSend(chatId, text, replyTo = null) {
 const knownGroups = new Set()
 const lastMessageTime = new Map()
 const messageCountSinceRandom = new Map()
+const lastSent = new Map() // anti-duplicate buffer
 
 if (!process.env.BOT_TOKEN) {
   throw new Error('BOT_TOKEN is not set in environment variables')
@@ -53,11 +54,34 @@ bot.catch((err, ctx) => {
   console.error('Bot error:', err.message, 'update type:', ctx.updateType)
 })
 
+// ---- Anti-duplicate helpers ----
+function isDuplicate(chatId, sentence) {
+  const list = lastSent.get(chatId) || []
+  return list.includes(sentence)
+}
+
+function storeSentence(chatId, sentence) {
+  const list = lastSent.get(chatId) || []
+  list.push(sentence)
+  if (list.length > 10) list.shift() // keep last 10
+  lastSent.set(chatId, list)
+}
+
+async function generateNonDuplicate(chatId, maxWords) {
+  let sentence = ''
+  for (let i = 0; i < 3; i++) {
+    sentence = await generateRandom(chatId, maxWords)
+    if (!sentence) return ''
+    if (!isDuplicate(chatId, sentence)) return sentence
+  }
+  return sentence // fallback even if duplicate
+}
+
 // ---- /markov command ----
 bot.command(STRINGS.COMMAND_KEY, async (ctx) => {
   if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
-  const sentence = await generateRandom(ctx.chat.id, 25)
+  const sentence = await generateNonDuplicate(ctx.chat.id, 25)
 
   if (!sentence) {
     safeSend(ctx.chat.id, STRINGS.NEED_MORE_DATA)
@@ -65,6 +89,7 @@ bot.command(STRINGS.COMMAND_KEY, async (ctx) => {
   }
 
   safeSend(ctx.chat.id, sentence)
+  storeSentence(ctx.chat.id, sentence)
 })
 
 // ---- On text ----
@@ -99,10 +124,11 @@ bot.on('text', async (ctx) => {
       msg.reply_to_message.from.is_bot
 
     if (isReplyToBot) {
-      const sentence = await generateRandom(chat.id, 25)
+      const sentence = await generateNonDuplicate(chat.id, 25)
       if (!sentence) return
 
       safeSend(chat.id, sentence, msg.message_id)
+      storeSentence(chat.id, sentence)
     }
 
     return
@@ -132,11 +158,12 @@ setInterval(async () => {
   // const groups = Array.from(knownGroups)
   // const randomChatId = groups[Math.floor(Math.random() * groups.length)]
 
-  const sentence = await generateRandom(randomChatId, 25)
+  const sentence = await generateNonDuplicate(randomChatId, 25)
   if (!sentence) return
 
   try {
     safeSend(randomChatId, sentence)
+    storeSentence(randomChatId, sentence)
     messageCountSinceRandom.set(randomChatId, 0)
   } catch (err) {
     console.error('failed to send random message', err.message)
