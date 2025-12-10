@@ -71,7 +71,7 @@ async function addMessage(chatId, text) {
   )
 }
 
-// ساخت زنجیره مارکوف (tri-gram: دو کلمه → کلمه بعدی) + کلیدهای شروع
+// ساخت زنجیره مارکوف (4-gram: سه کلمه → کلمه بعدی) + کلیدهای شروع هوشمند
 function buildChain(messages) {
   const chain = {}
   const startKeys = []
@@ -83,23 +83,27 @@ function buildChain(messages) {
     // هر پیام را به عنوان یک جمله کامل در نظر می‌گیریم
     const sentence = normalized
     const words = sentence.split(/\s+/).filter(Boolean)
-    if (words.length < 3) continue
 
-    // دو کلمه اول هر جمله را به عنوان شروع ذخیره می‌کنیم
-    const startKey = `${words[0]} ${words[1]}`
+    // نیاز به حداقل 4 کلمه
+    if (words.length < 4) continue
+
+    // اضافه‌کردن همه شروع‌ها (بدون فیلتر stopword)
+    const startKey = `${words[0]} ${words[1]} ${words[2]}`
     startKeys.push(startKey)
 
-    for (let i = 0; i < words.length - 2; i++) {
+    // 4‑gram: سه کلمه → کلمه بعدی
+    for (let i = 0; i < words.length - 3; i++) {
       const w1 = words[i]
       const w2 = words[i + 1]
       const w3 = words[i + 2]
+      const w4 = words[i + 3]
 
-      const key = `${w1} ${w2}`
+      const key = `${w1} ${w2} ${w3}`
 
       if (!chain[key]) {
         chain[key] = []
       }
-      chain[key].push(w3)
+      chain[key].push(w4)
     }
 
     continue
@@ -108,17 +112,19 @@ function buildChain(messages) {
   return { chain, startKeys }
 }
 
-// تولید جمله رندوم بر اساس tri-gram و شروع‌های طبیعی‌تر
+// تولید جمله رندوم بر اساس 4-gram و شروع‌های هوشمند + انتخاب وزن‌دار کلمه بعدی
 function generateFromChain(chain, startKeys, maxWords = 25) {
   const keys = Object.keys(chain)
   if (keys.length === 0) return ''
 
   let currentKey
 
-  // اگر startKeys داشتیم، سعی می‌کنیم از یکی از آنها شروع کنیم
+  // Smart start: اگر startKeys مناسب بود، از آن استفاده کن
   if (Array.isArray(startKeys) && startKeys.length > 0) {
-    currentKey = startKeys[Math.floor(Math.random() * startKeys.length)]
-    if (!chain[currentKey]) {
+    const chosen = startKeys[Math.floor(Math.random() * startKeys.length)]
+    if (chain[chosen]) {
+      currentKey = chosen
+    } else {
       currentKey = keys[Math.floor(Math.random() * keys.length)]
     }
   } else {
@@ -126,24 +132,33 @@ function generateFromChain(chain, startKeys, maxWords = 25) {
   }
 
   const parts = currentKey.split(' ')
-  if (parts.length < 2) return ''
+  if (parts.length < 3) return ''
 
-  const result = [parts[0], parts[1]]
+  const result = [...parts]
 
-  for (let i = 0; i < maxWords - 2; i++) {
+  for (let i = 0; i < maxWords - 3; i++) {
     const nextList = chain[currentKey]
     if (!nextList || nextList.length === 0) break
 
-    const next = nextList[Math.floor(Math.random() * nextList.length)]
+    // --- Weighted selection ---
+    // کلمات پرتکرار ضریب کمتر، کم‌تکرارها ضریب بیشتر
+    const counts = {}
+    nextList.forEach(w => counts[w] = (counts[w] || 0) + 1)
+
+    let weighted = []
+    for (const w of Object.keys(counts)) {
+      const c = counts[w]
+      const weight = Math.max(1, Math.floor(5 / c)) // هرچه تکرار بیشتر، وزن کمتر
+      for (let k = 0; k < weight; k++) weighted.push(w)
+    }
+
+    const next = weighted[Math.floor(Math.random() * weighted.length)]
     result.push(next)
 
-    // جفت جدید: دو کلمه آخر
     const len = result.length
-    currentKey = `${result[len - 2]} ${result[len - 1]}`
+    currentKey = `${result[len - 3]} ${result[len - 2]} ${result[len - 1]}`
 
-    if (!chain[currentKey]) {
-      break
-    }
+    if (!chain[currentKey]) break
   }
 
   return result.join(' ')
@@ -154,7 +169,7 @@ function looksGood(sentence) {
   if (!s) return false
 
   const words = s.split(/\s+/)
-  if (words.length < 6) return false // خیلی کوتاه است
+  if (words.length < 7) return false // خیلی کوتاه است
 
   const last = words[words.length - 1]
   // پایان با علائم نگارشی خوشگل
