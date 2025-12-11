@@ -36,7 +36,8 @@ export function registerTextHandler(bot, deps) {
       const isReplyToBot =
         msg.reply_to_message &&
         msg.reply_to_message.from &&
-        msg.reply_to_message.from.is_bot
+        ctx.botInfo &&
+        msg.reply_to_message.from.id === ctx.botInfo.id
 
       if (isReplyToBot) {
         const sentence = await generateNonDuplicate(chat.id, 25)
