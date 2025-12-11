@@ -4,7 +4,14 @@ const cron = require('node-cron')
 const STRINGS = require('./strings')
 
 // ---- MongoDB integration ----
-const { initDb, addMessage, generateRandom } = require('./markov')
+const {
+  initDb,
+  addMessage,
+  generateRandom,
+  addLearningGroup,
+  removeLearningGroup,
+  loadLearningGroups
+} = require('./markov')
 
 // ---- Queue to avoid 429 ----
 const sendQueue = []
@@ -26,13 +33,23 @@ async function processQueue() {
     }
   } catch (err) {
     console.error('sendQueue error:', err.message)
+
+    // اگر Telegram گفت Too Many Requests، به retry_after احترام می‌ذاریم
+    const retryAfter =
+      (err.parameters && err.parameters.retry_after) ||
+      (err.on && err.on.parameters && err.on.parameters.retry_after)
+
+    if (retryAfter && Number.isFinite(retryAfter)) {
+      const delayMs = (retryAfter + 1) * 1000
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
   }
 
   isSending = false
 }
 
-// process up to ~2 messages per second (safe global rate)
-setInterval(processQueue, 500)
+// process up to ~1 message per second (safer rate)
+setInterval(processQueue, 1000)
 
 function safeSend(chatId, text, replyTo = null) {
   sendQueue.push({ chatId, text, replyTo })
@@ -42,11 +59,13 @@ const knownGroups = new Set()
 const lastMessageTime = new Map()
 const messageCountSinceRandom = new Map()
 const lastSent = new Map() // anti-duplicate buffer
+const learningGroups = new Set() // groups allowed for learning
 
 if (!process.env.BOT_TOKEN) {
   throw new Error('BOT_TOKEN is not set in environment variables')
 }
 
+const OWNER_ID = Number(process.env.OWNER_ID)
 const bot = new Telegraf(process.env.BOT_TOKEN)
 
 // Global error handler
@@ -54,28 +73,32 @@ bot.catch((err, ctx) => {
   console.error('Bot error:', err.message, 'update type:', ctx.updateType)
 })
 
-// ---- Anti-duplicate helpers ----
-function isDuplicate(chatId, sentence) {
-  const list = lastSent.get(chatId) || []
-  return list.includes(sentence)
-}
+// ---- Learning control commands ----
+bot.command(STRINGS.TRAIN_CMD, async (ctx) => {
+  if (ctx.from.id !== OWNER_ID) return
+  if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
-function storeSentence(chatId, sentence) {
-  const list = lastSent.get(chatId) || []
-  list.push(sentence)
-  if (list.length > 10) list.shift() // keep last 10
-  lastSent.set(chatId, list)
-}
-
-async function generateNonDuplicate(chatId, maxWords) {
-  let sentence = ''
-  for (let i = 0; i < 3; i++) {
-    sentence = await generateRandom(chatId, maxWords)
-    if (!sentence) return ''
-    if (!isDuplicate(chatId, sentence)) return sentence
+  learningGroups.add(ctx.chat.id)
+  try {
+    await addLearningGroup(ctx.chat.id)
+  } catch (e) {
+    console.error('failed to persist learning group:', e.message)
   }
-  return sentence // fallback even if duplicate
-}
+  safeSend(ctx.chat.id, STRINGS.TRAIN_ENABLED)
+})
+
+bot.command(STRINGS.UNTRAIN_CMD, async (ctx) => {
+  if (ctx.from.id !== OWNER_ID) return
+  if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
+
+  learningGroups.delete(ctx.chat.id)
+  try {
+    await removeLearningGroup(ctx.chat.id)
+  } catch (e) {
+    console.error('failed to remove learning group:', e.message)
+  }
+  safeSend(ctx.chat.id, STRINGS.TRAIN_DISABLED)
+})
 
 // ---- /markov command ----
 bot.command(STRINGS.COMMAND_KEY, async (ctx) => {
@@ -107,16 +130,20 @@ bot.on('text', async (ctx) => {
   if (chat.type === 'group' || chat.type === 'supergroup') {
     knownGroups.add(chat.id)
 
-    if (text.startsWith('/')) return
-    if (text.trim().length < 2) return
+    const isLearningGroup = learningGroups.has(chat.id)
 
-    await addMessage(chat.id, text)
+    // فقط در گروه‌هایی که برای یادگیری فعال شده‌اند، پیام‌ها را ذخیره و برای رندوم استفاده می‌کنیم
+    if (isLearningGroup) {
+      if (!text.startsWith('/') && text.trim().length >= 2) {
+        await addMessage(chat.id, text)
 
-    // Update last message time for this group
-    lastMessageTime.set(chat.id, Date.now())
+        // Update last message time for this group
+        lastMessageTime.set(chat.id, Date.now())
 
-    const prevCount = messageCountSinceRandom.get(chat.id) || 0
-    messageCountSinceRandom.set(chat.id, prevCount + 1)
+        const prevCount = messageCountSinceRandom.get(chat.id) || 0
+        messageCountSinceRandom.set(chat.id, prevCount + 1)
+      }
+    }
 
     const isReplyToBot =
       msg.reply_to_message &&
@@ -202,9 +229,36 @@ http
 
 // ---- Start bot after DB ----
 initDb()
+  .then(() => loadLearningGroups())
+  .then((ids) => {
+    ids.forEach((id) => learningGroups.add(id))
+  })
   .then(() => bot.launch())
   .then(() => console.log('🤖 Bot started...'))
   .catch((err) => console.error('Bot failed:', err))
 
 process.once('SIGINT', () => bot.stop('SIGINT'))
 process.once('SIGTERM', () => bot.stop('SIGTERM'))
+
+// ---- Anti-duplicate helpers ----
+function isDuplicate(chatId, sentence) {
+  const list = lastSent.get(chatId) || []
+  return list.includes(sentence)
+}
+
+function storeSentence(chatId, sentence) {
+  const list = lastSent.get(chatId) || []
+  list.push(sentence)
+  if (list.length > 10) list.shift() // keep last 10
+  lastSent.set(chatId, list)
+}
+
+async function generateNonDuplicate(chatId, maxWords) {
+  let sentence = ''
+  for (let i = 0; i < 3; i++) {
+    sentence = await generateRandom(chatId, maxWords)
+    if (!sentence) return ''
+    if (!isDuplicate(chatId, sentence)) return sentence
+  }
+  return sentence // fallback even if duplicate
+}

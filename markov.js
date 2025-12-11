@@ -10,31 +10,39 @@ const COLLECTION_NAME = process.env.MONGO_COLLECTION || 'groups'
 
 const client = new MongoClient(uri)
 let collection = null
+let learningCollection = null
 
 // اتصال به دیتابیس
 async function initDb() {
-  if (collection) return
+  if (collection && learningCollection) return
   await client.connect()
   const db = client.db(DB_NAME)
   collection = db.collection(COLLECTION_NAME)
+  learningCollection = db.collection('learning_groups')
   console.log('📦 MongoDB connected:', DB_NAME, '/', COLLECTION_NAME)
 }
 
 // خواندن پیام‌های یک گروه
-async function loadMessagesForChat(chatId) {
+async function loadMessagesForChat() {
   if (!collection) await initDb()
-  const key = String(chatId)
 
-  const doc = await collection.findOne(
-    { chatId: key },
-    { projection: { messages: 1, _id: 0 } }
-  )
+  const docs = await collection
+    .find({}, { projection: { messages: 1, _id: 0 } })
+    .toArray()
 
-  if (!doc || !Array.isArray(doc.messages)) return []
-  return doc.messages
-    .filter((t) => typeof t === 'string')
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0)
+  const all = []
+
+  for (const doc of docs) {
+    if (!doc || !Array.isArray(doc.messages)) continue
+    for (const t of doc.messages) {
+      if (typeof t !== 'string') continue
+      const trimmed = t.trim()
+      if (!trimmed || trimmed.length === 0) continue
+      all.push(trimmed)
+    }
+  }
+
+  return all
 }
 
 // ذخیره یک پیام
@@ -80,12 +88,18 @@ function buildChain(messages) {
     const normalized = text.trim()
     if (!normalized) continue
 
-    // هر پیام را به عنوان یک جمله کامل در نظر می‌گیریم
     const sentence = normalized
     const words = sentence.split(/\s+/).filter(Boolean)
 
     // نیاز به حداقل 4 کلمه
     if (words.length < 4) continue
+
+    // پیام‌هایی که با کلمات ربط و حروف اضافه تمام می‌شوند، معمولاً نیمه‌تمام‌اند
+    const badEndings = ['به', 'تو', 'برای', 'با', 'از', 'در', 'که', 'و', 'یا', 'تا', 'پیش', 'روی', 'زیر', 'توی', 'سر', 'داخل']
+    const lastWord = words[words.length - 1]
+    if (badEndings.includes(lastWord)) {
+      continue
+    }
 
     // اضافه‌کردن همه شروع‌ها (بدون فیلتر stopword)
     const startKey = `${words[0]} ${words[1]} ${words[2]}`
@@ -178,7 +192,7 @@ function looksGood(sentence) {
 
 // خروجی آماده برای بات (بدون کش)
 async function generateRandom(chatId, maxWords = 25) {
-  const messages = await loadMessagesForChat(chatId)
+  const messages = await loadMessagesForChat()
   console.log('MARKOV DEBUG:', chatId, 'messages:', messages.length)
 
   if (messages.length < 5) return ''
@@ -202,8 +216,45 @@ async function generateRandom(chatId, maxWords = 25) {
   return fallback
 }
 
+async function addLearningGroup(chatId) {
+  if (!learningCollection) await initDb()
+  const key = String(chatId)
+
+  await learningCollection.updateOne(
+    { chatId: key },
+    { $set: { chatId: key } },
+    { upsert: true }
+  )
+}
+
+async function removeLearningGroup(chatId) {
+  if (!learningCollection) await initDb()
+  const key = String(chatId)
+
+  await learningCollection.deleteOne({ chatId: key })
+}
+
+async function loadLearningGroups() {
+  if (!learningCollection) await initDb()
+
+  const docs = await learningCollection
+    .find({}, { projection: { chatId: 1, _id: 0 } })
+    .toArray()
+
+  return docs
+    .map((d) => {
+      if (!d || !d.chatId) return null
+      const n = Number(d.chatId)
+      return Number.isNaN(n) ? d.chatId : n
+    })
+    .filter((v) => v !== null)
+}
+
 module.exports = {
   initDb,
   addMessage,
   generateRandom,
+  addLearningGroup,
+  removeLearningGroup,
+  loadLearningGroups,
 }
