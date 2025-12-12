@@ -221,7 +221,7 @@ function isAcceptable(sentence, minWords) {
 
 export async function generateRandomSentence(
   chatId,
-  maxWords = MAX_WORDS,
+  maxWords = GEN_CONFIG.maxWords,
   topicHints = [],
   { log = true, minWords = GEN_CONFIG.minWords } = {}
 ) {

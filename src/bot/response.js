@@ -4,7 +4,7 @@ import { generateRandomSentence } from '../services/markov.js'
 export function createResponder(lastSentMap) {
   return async function generateResponse(
     chatId,
-    { maxWords = 50, hints = [] } = {}
+    { maxWords = 25, hints = [] } = {}
   ) {
     let lastCandidate = ''
     const retryLogs = []
