@@ -43,18 +43,21 @@ export function registerTextHandler(bot, deps) {
         ctx.botInfo &&
         msg.reply_to_message.from.id === ctx.botInfo.id
 
-      if (isReplyToBot) {
-        const replyHints = getHintsFromTexts([text])
-        const hints = replyHints
-        const { text: sentence } = await generateResponse(chat.id, {
-          maxWords: 25,
-          hints,
-        })
-        if (!sentence) return
+      if (!text.startsWith('/')) {
+        const shouldReply = isReplyToBot || Math.random() < 0.05
 
-        safeSend(chat.id, sentence, msg.message_id)
-        storeSentence(chat.id, sentence)
-      } else if (!text.startsWith('/')) {
+        if (shouldReply) {
+          const hints = getHintsFromTexts([text])
+          const { text: sentence } = await generateResponse(chat.id, {
+            maxWords: 25,
+            hints,
+          })
+          if (sentence) {
+            safeSend(chat.id, sentence, msg.message_id)
+            storeSentence(chat.id, sentence)
+          }
+        }
+
         addTopicSample(chat.id, text)
       }
     }

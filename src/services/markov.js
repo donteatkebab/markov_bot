@@ -3,7 +3,7 @@ import { loadAllMessages } from '../data/messages.js'
 const GEN_CONFIG = {
   order: 3,
   minWords: 6,
-  maxWords: 50,
+  maxWords: 25,
   maxHops: 2,
   maxRepeatAttempts: 3,
 }
