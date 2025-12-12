@@ -4,9 +4,11 @@ export function registerTextHandler(bot, deps) {
   const {
     state,
     addMessage,
-    generateNonDuplicate,
+    generateResponse,
     safeSend,
     storeSentence,
+    addTopicSample,
+    getTopicHints,
   } = deps
 
   bot.on('text', async (ctx) => {
@@ -43,11 +45,18 @@ export function registerTextHandler(bot, deps) {
 
       if (isReplyToBot) {
         const replyHints = getHintsFromTexts([text])
-        const sentence = await generateNonDuplicate(chat.id, 25, replyHints)
+        const topicHints = getTopicHints(chat.id)
+        const hints = Array.from(new Set([...replyHints, ...topicHints]))
+        const { text: sentence } = await generateResponse(chat.id, {
+          maxWords: 25,
+          hints,
+        })
         if (!sentence) return
 
         safeSend(chat.id, sentence, msg.message_id)
         storeSentence(chat.id, sentence)
+      } else if (!text.startsWith('/')) {
+        addTopicSample(chat.id, text)
       }
     }
   })

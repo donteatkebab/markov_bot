@@ -1,4 +1,5 @@
 const MAX_HINTS = 5
+const MAX_TOPIC_TEXTS = 5
 
 export function getHintsFromTexts(texts = []) {
   if (!texts || texts.length === 0) return []
@@ -27,4 +28,16 @@ export function getHintsFromTexts(texts = []) {
     .map(([w]) => w)
 
   return sorted.slice(0, MAX_HINTS)
+}
+
+export function addTopicText(map, chatId, text) {
+  const list = map.get(chatId) || []
+  list.push(text)
+  if (list.length > MAX_TOPIC_TEXTS) list.shift()
+  map.set(chatId, list)
+}
+
+export function getTopicHints(map, chatId) {
+  const texts = map.get(chatId) || []
+  return getHintsFromTexts(texts)
 }

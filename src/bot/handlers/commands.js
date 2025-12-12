@@ -4,10 +4,11 @@ export function registerCommandHandlers(bot, deps) {
     strings,
     state,
     safeSend,
-    generateNonDuplicate,
+    generateResponse,
     storeSentence,
     addLearningGroup,
     removeLearningGroup,
+    getTopicHints,
   } = deps
 
   bot.command(strings.TRAIN_CMD, async (ctx) => {
@@ -36,17 +37,22 @@ export function registerCommandHandlers(bot, deps) {
     safeSend(ctx.chat.id, strings.TRAIN_DISABLED)
   })
 
-  bot.command(strings.COMMAND_KEY, async (ctx) => {
+  bot.command(strings.TALK_CMD, async (ctx) => {
+    if (ctx.from.id !== ownerId) return
     if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
-    const sentence = await generateNonDuplicate(ctx.chat.id, 25)
+    const hints = getTopicHints(ctx.chat.id)
+    const { text } = await generateResponse(ctx.chat.id, {
+      maxWords: 25,
+      hints,
+    })
 
-    if (!sentence) {
+    if (!text) {
       safeSend(ctx.chat.id, strings.NEED_MORE_DATA)
       return
     }
 
-    safeSend(ctx.chat.id, sentence)
-    storeSentence(ctx.chat.id, sentence)
+    safeSend(ctx.chat.id, text)
+    storeSentence(ctx.chat.id, text)
   })
 }

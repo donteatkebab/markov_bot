@@ -91,7 +91,12 @@ function looksGood(sentence) {
   return /[.!؟?؛…]$/.test(last)
 }
 
-export async function generateRandomSentence(chatId, maxWords = 25, topicHints = []) {
+export async function generateRandomSentence(
+  chatId,
+  maxWords = 25,
+  topicHints = [],
+  { log = true } = {}
+) {
   const messages = await loadAllMessages()
   if (messages.length < 5) return ''
 
@@ -118,7 +123,7 @@ export async function generateRandomSentence(chatId, maxWords = 25, topicHints =
   }
 
   const finalSentence = chosen || fallback
-  if (finalSentence) {
+  if (finalSentence && log) {
     console.log(
       'MARKOV DEBUG:',
       chatId,
@@ -130,4 +135,30 @@ export async function generateRandomSentence(chatId, maxWords = 25, topicHints =
   }
 
   return finalSentence
+}
+
+export async function generateRandomWord(chatId) {
+  const messages = await loadAllMessages()
+  if (!messages || messages.length === 0) return ''
+
+  const words = []
+  for (const msg of messages) {
+    if (typeof msg !== 'string') continue
+    const parts = msg.split(/\s+/).filter(Boolean)
+    for (const p of parts) {
+      words.push(p)
+    }
+  }
+
+  if (words.length === 0) return ''
+
+  const word = words[Math.floor(Math.random() * words.length)]
+  return word
+}
+
+export async function generateRandomMessage(chatId) {
+  const messages = await loadAllMessages()
+  if (!messages || messages.length === 0) return ''
+  const random = messages[Math.floor(Math.random() * messages.length)]
+  return random
 }

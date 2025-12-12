@@ -1,13 +1,14 @@
 import { Telegraf } from 'telegraf'
 import { createSendQueue } from './send-queue.js'
-import { isDuplicate, storeSentence } from './dedup.js'
+import { storeSentence } from './dedup.js'
 import { startRandomTalker } from './random-talker.js'
 import { scheduleDailyMessage } from './daily-message.js'
 import { registerCommandHandlers } from './handlers/commands.js'
 import { registerTextHandler } from './handlers/text.js'
-import { generateRandomSentence } from '../services/markov.js'
 import { addMessage } from '../data/messages.js'
 import { addLearningGroup, removeLearningGroup } from '../data/learning-groups.js'
+import { createResponder } from './response.js'
+import { addTopicText, getTopicHints } from './topic-memory.js'
 
 export function createBot({
   botToken,
@@ -24,43 +25,39 @@ export function createBot({
   const { safeSend } = createSendQueue(bot)
   const storeSentenceForChat = (chatId, sentence) =>
     storeSentence(state.lastSent, chatId, sentence)
+  const generateResponse = createResponder(state.lastSent)
 
   bot.catch((err, ctx) => {
     console.error('Bot error:', err.message, 'update type:', ctx.updateType)
   })
-
-  async function generateNonDuplicate(chatId, maxWords, extraHints = []) {
-    let sentence = ''
-    for (let i = 0; i < 3; i++) {
-      sentence = await generateRandomSentence(chatId, maxWords, extraHints)
-      if (!sentence) return ''
-      if (!isDuplicate(state.lastSent, chatId, sentence)) return sentence
-    }
-    return sentence
-  }
 
   registerCommandHandlers(bot, {
     ownerId,
     strings,
     state,
     safeSend,
-    generateNonDuplicate,
+    generateResponse,
     storeSentence: storeSentenceForChat,
     addLearningGroup,
     removeLearningGroup,
+    getTopicHints: (chatId) => getTopicHints(state.topicTexts, chatId),
   })
 
   registerTextHandler(bot, {
     state,
     addMessage,
-    generateNonDuplicate,
+    generateResponse,
     safeSend,
     storeSentence: storeSentenceForChat,
+    addTopicSample: (chatId, text) =>
+      addTopicText(state.topicTexts, chatId, text),
+    getTopicHints: (chatId) => getTopicHints(state.topicTexts, chatId),
   })
 
   startRandomTalker({
     state,
-    generateSentence: generateNonDuplicate,
+    generateResponse,
+    getTopicHints: (chatId) => getTopicHints(state.topicTexts, chatId),
     safeSend,
     storeSentence: storeSentenceForChat,
     chance: randomConfig.chance,
@@ -86,5 +83,6 @@ function createBotState() {
     messageCountSinceRandom: new Map(),
     lastSent: new Map(),
     learningGroups: new Set(),
+    topicTexts: new Map(),
   }
 }

@@ -1,6 +1,7 @@
 export function startRandomTalker({
   state,
-  generateSentence,
+  generateResponse,
+  getTopicHints,
   safeSend,
   storeSentence,
   chance,
@@ -27,12 +28,16 @@ export function startRandomTalker({
     const randomChatId =
       activeGroups[Math.floor(Math.random() * activeGroups.length)]
 
-    const sentence = await generateSentence(randomChatId, 25)
-    if (!sentence) return
+    const hints = getTopicHints(randomChatId)
+    const { text } = await generateResponse(randomChatId, {
+      maxWords: 25,
+      hints,
+    })
+    if (!text) return
 
     try {
-      safeSend(randomChatId, sentence)
-      storeSentence(randomChatId, sentence)
+      safeSend(randomChatId, text)
+      storeSentence(randomChatId, text)
       state.messageCountSinceRandom.set(randomChatId, 0)
     } catch (err) {
       console.error('failed to send random message', err.message)
