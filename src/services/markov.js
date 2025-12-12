@@ -1,27 +1,37 @@
 import { loadAllMessages } from '../data/messages.js'
 
-function buildChain(messages) {
+const GEN_CONFIG = {
+  order: 3,
+  minWords: 6,
+  maxWords: 50,
+  maxHops: 2,
+  maxRepeatAttempts: 3,
+}
+
+function buildChainForOrder(messages, order) {
   const chain = {}
   const startKeys = []
+  const prefixLen = order - 1
+  if (prefixLen < 1) return { chain, startKeys, order }
 
   for (const text of messages) {
     const normalized = text.trim()
     if (!normalized) continue
 
     const words = normalized.split(/\s+/).filter(Boolean)
-    if (words.length < 4) continue
+    if (words.length < order) continue
 
-    startKeys.push(`${words[0]} ${words[1]} ${words[2]}`)
+    startKeys.push(words.slice(0, prefixLen).join(' '))
 
-    for (let i = 0; i < words.length - 3; i++) {
-      const key = `${words[i]} ${words[i + 1]} ${words[i + 2]}`
-      const next = words[i + 3]
+    for (let i = 0; i <= words.length - order; i++) {
+      const key = words.slice(i, i + prefixLen).join(' ')
+      const next = words[i + prefixLen]
       if (!chain[key]) chain[key] = []
       chain[key].push(next)
     }
   }
 
-  return { chain, startKeys }
+  return { chain, startKeys, order }
 }
 
 function chooseStartKey({ chain, startKeys }, topicHints = []) {
@@ -34,9 +44,9 @@ function chooseStartKey({ chain, startKeys }, topicHints = []) {
     hints.length === 0
       ? []
       : keyList.filter((k) => {
-          const lower = k.toLowerCase()
-          return hints.some((h) => lower.includes(h))
-        })
+        const lower = k.toLowerCase()
+        return hints.some((h) => lower.includes(h))
+      })
 
   const pick = (keyList) => {
     const filtered = preferHints(keyList)
@@ -58,79 +68,212 @@ function chooseStartKey({ chain, startKeys }, topicHints = []) {
   return ''
 }
 
-function generateFromChain(chainData, maxWords = 25, onModelUsed, topicHints = []) {
-  const startKey = chooseStartKey(chainData, topicHints)
+function chooseStitchedStart(chainData, topicHints = []) {
+  const hints = Array.isArray(topicHints)
+    ? topicHints.map((h) => h.toLowerCase())
+    : []
+
+  const keys = Array.isArray(chainData.startKeys)
+    ? chainData.startKeys
+    : Object.keys(chainData.chain)
+  if (keys.length === 0) return ''
+
+  const byPrefix = new Map()
+  const prefixLen = chainData.order - 1
+  const groupLen = Math.max(1, prefixLen - 1)
+
+  for (const key of keys) {
+    const parts = key.split(' ')
+    if (parts.length < prefixLen || groupLen >= parts.length) continue
+    const prefix = parts.slice(0, groupLen).join(' ')
+    const variant = parts[groupLen]
+    const lower = key.toLowerCase()
+    const hasHint = hints.length > 0 && hints.some((h) => lower.includes(h))
+
+    const entry = byPrefix.get(prefix) || { words: new Set(), hasHint: false }
+    entry.words.add(variant)
+    entry.hasHint = entry.hasHint || hasHint
+    byPrefix.set(prefix, entry)
+  }
+
+  const candidates = Array.from(byPrefix.entries()).filter(
+    ([, entry]) => entry.words.size >= 2
+  )
+  if (candidates.length === 0) return ''
+
+  const hinted = hints.length
+    ? candidates.filter(([, entry]) => entry.hasHint)
+    : []
+
+  const pool = hinted.length > 0 ? hinted : candidates
+  const [prefix, entry] = pool[Math.floor(Math.random() * pool.length)]
+
+  const words = Array.from(entry.words)
+  const first = words[Math.floor(Math.random() * words.length)]
+  let second = first
+  if (words.length > 1) {
+    while (second === first) {
+      second = words[Math.floor(Math.random() * words.length)]
+    }
+  }
+
+  return `${prefix} ${second}`.trim()
+}
+
+function selectStart(chainData, topicHints) {
+  return (
+    chooseStitchedStart(chainData, topicHints) ||
+    chooseStartKey(chainData, topicHints)
+  )
+}
+
+function pickNext(nextList, prevWord, maxRepeatAttempts) {
+  if (!Array.isArray(nextList) || nextList.length === 0) return ''
+  let next = nextList[Math.floor(Math.random() * nextList.length)]
+  let attempts = 0
+
+  while (
+    prevWord &&
+    next === prevWord &&
+    attempts < maxRepeatAttempts &&
+    nextList.length > 1
+  ) {
+    next = nextList[Math.floor(Math.random() * nextList.length)]
+    attempts++
+  }
+
+  return next
+}
+
+function appendJump(result, jumpStart, maxWords) {
+  const jumpParts = jumpStart.split(' ')
+  const remaining = maxWords - result.length
+  if (remaining <= 0) return
+
+  const overlapTrimmed =
+    result.length > 0 &&
+      jumpParts.length > 0 &&
+      jumpParts[0] === result[result.length - 1]
+      ? jumpParts.slice(1)
+      : jumpParts
+
+  result.push(...overlapTrimmed.slice(0, remaining))
+}
+
+function generateFromChain(
+  chainData,
+  maxWords,
+  onModelUsed,
+  topicHints,
+  { minWords, maxHops, maxRepeatAttempts }
+) {
+  const startKey = selectStart(chainData, topicHints)
   if (!startKey) return ''
 
+  const modelName = `${chainData.order}-gram`
+  onModelUsed?.(modelName)
+
   const result = startKey.split(' ')
+  const prefixLen = chainData.order - 1
+  let hops = 0
 
   for (let i = result.length; i < maxWords; i++) {
     const len = result.length
-    const key = result.slice(len - 3, len).join(' ')
+    const key = result.slice(len - prefixLen, len).join(' ')
     const nextList = chainData.chain[key]
 
-    if (!nextList || nextList.length === 0) break
+    if (!nextList || nextList.length === 0) {
+      if (hops >= maxHops) break
 
-    onModelUsed?.('4-gram')
+      const jumpStart = selectStart(chainData, topicHints)
+      if (!jumpStart) break
 
-    const next = nextList[Math.floor(Math.random() * nextList.length)]
+      appendJump(result, jumpStart, maxWords)
+      hops++
+      continue
+    }
+
+    const prev = result.length > 0 ? result[result.length - 1] : ''
+    const next = pickNext(nextList, prev, maxRepeatAttempts)
+    if (!next) break
     result.push(next)
   }
 
   return result.join(' ')
 }
 
-function looksGood(sentence) {
-  const s = sentence.trim()
-  if (!s) return false
+function isAcceptable(sentence, minWords) {
+  const cleaned = sentence.trim()
+  if (!cleaned) return false
 
-  const words = s.split(/\s+/)
-  if (words.length < 7) return false
+  const words = cleaned.split(/\s+/)
+  if (words.length < minWords) return false
 
-  const last = words[words.length - 1]
-  return /[.!؟?؛…]$/.test(last)
+  const seenPairs = new Set()
+  for (let i = 0; i < words.length - 1; i++) {
+    const pair = `${words[i]} ${words[i + 1]}`
+    if (seenPairs.has(pair)) return false
+    seenPairs.add(pair)
+  }
+
+  return true
 }
 
 export async function generateRandomSentence(
   chatId,
-  maxWords = 25,
+  maxWords = MAX_WORDS,
   topicHints = [],
-  { log = true } = {}
+  { log = true, minWords = GEN_CONFIG.minWords } = {}
 ) {
   const messages = await loadAllMessages()
   if (messages.length < 5) return ''
 
-  const chainData = buildChain(messages)
-
-  let fallback = ''
-  let usedForFallback = 'none'
-  let chosen = ''
-
-  for (let i = 0; i < 3; i++) {
-    const usedModels = new Set()
-    const sentence = generateFromChain(chainData, maxWords, (model) =>
-      usedModels.add(model)
-    , topicHints)
-    if (!sentence) continue
-    fallback = sentence
-    usedForFallback =
-      usedModels.size > 0 ? Array.from(usedModels).sort().join(',') : 'none'
-
-    if (looksGood(sentence)) {
-      chosen = sentence
-      break
-    }
+  const messageSet = new Set(
+    messages.map((m) => (typeof m === 'string' ? m.trim() : '')).filter(Boolean)
+  )
+  const chain3 = buildChainForOrder(messages, GEN_CONFIG.order)
+  const attempts = [chain3, chain3, chain3]
+  const genConfig = {
+    minWords,
+    maxWords,
+    maxHops: GEN_CONFIG.maxHops,
+    maxRepeatAttempts: GEN_CONFIG.maxRepeatAttempts,
   }
 
-  const finalSentence = chosen || fallback
+  let finalSentence = ''
+
+  for (const chainData of attempts) {
+    const usedModels = new Set()
+    const hasChain = Object.keys(chainData.chain).length > 0
+    if (!hasChain) break
+
+    const sentence = generateFromChain(
+      chainData,
+      maxWords,
+      (model) => usedModels.add(model),
+      topicHints,
+      genConfig
+    )
+    if (!sentence) continue
+
+    const cleaned = sentence.trim()
+    if (!cleaned || messageSet.has(cleaned)) continue
+    if (!isAcceptable(cleaned, minWords)) continue
+
+    finalSentence = sentence
+    break
+  }
+
   if (finalSentence && log) {
+    const used =
+      attempts.length > 0 ? '3-gram' : 'none'
     console.log(
       'MARKOV DEBUG:',
       chatId,
       'messages:',
       messages.length,
       'used:',
-      usedForFallback
+      used
     )
   }
 
@@ -154,11 +297,4 @@ export async function generateRandomWord(chatId) {
 
   const word = words[Math.floor(Math.random() * words.length)]
   return word
-}
-
-export async function generateRandomMessage(chatId) {
-  const messages = await loadAllMessages()
-  if (!messages || messages.length === 0) return ''
-  const random = messages[Math.floor(Math.random() * messages.length)]
-  return random
 }
