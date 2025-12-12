@@ -41,33 +41,53 @@ function buildChains(messages) {
   return { chain4, chain5, startKeys4, startKeys5 }
 }
 
-function chooseStartKey({ chain4, chain5, startKeys4, startKeys5 }) {
+function chooseStartKey({ chain4, chain5, startKeys4, startKeys5 }, topicHints = []) {
   const keys5 = Object.keys(chain5)
   const keys4 = Object.keys(chain4)
+  const hints = Array.isArray(topicHints)
+    ? topicHints.map((h) => h.toLowerCase())
+    : []
+
+  const preferHints = (keys) =>
+    hints.length === 0
+      ? []
+      : keys.filter((k) => {
+          const lower = k.toLowerCase()
+          return hints.some((h) => lower.includes(h))
+        })
+
+  const pick = (keys) => {
+    const filtered = preferHints(keys)
+    const pool = filtered.length > 0 ? filtered : keys
+    if (pool.length === 0) return ''
+    return pool[Math.floor(Math.random() * pool.length)]
+  }
 
   if (startKeys5.length > 0) {
-    const chosen = startKeys5[Math.floor(Math.random() * startKeys5.length)]
+    const chosen = pick(startKeys5)
     if (chain5[chosen]) return chosen
   }
 
   if (keys5.length > 0) {
-    return keys5[Math.floor(Math.random() * keys5.length)]
+    const chosen = pick(keys5)
+    if (chain5[chosen]) return chosen
   }
 
   if (startKeys4.length > 0) {
-    const chosen = startKeys4[Math.floor(Math.random() * startKeys4.length)]
+    const chosen = pick(startKeys4)
     if (chain4[chosen]) return chosen
   }
 
   if (keys4.length > 0) {
-    return keys4[Math.floor(Math.random() * keys4.length)]
+    const chosen = pick(keys4)
+    if (chain4[chosen]) return chosen
   }
 
   return ''
 }
 
-function generateFromChains(chains, maxWords = 25, onModelUsed) {
-  const startKey = chooseStartKey(chains)
+function generateFromChains(chains, maxWords = 25, onModelUsed, topicHints = []) {
+  const startKey = chooseStartKey(chains, topicHints)
   if (!startKey) return ''
 
   const result = startKey.split(' ')
@@ -112,7 +132,7 @@ function looksGood(sentence) {
   return /[.!؟?؛…]$/.test(last)
 }
 
-export async function generateRandomSentence(chatId, maxWords = 25) {
+export async function generateRandomSentence(chatId, maxWords = 25, topicHints = []) {
   const messages = await loadAllMessages()
   if (messages.length < 5) return ''
 
@@ -124,8 +144,11 @@ export async function generateRandomSentence(chatId, maxWords = 25) {
 
   for (let i = 0; i < 3; i++) {
     const usedModels = new Set()
-    const sentence = generateFromChains(chains, maxWords, (model) =>
-      usedModels.add(model)
+    const sentence = generateFromChains(
+      chains,
+      maxWords,
+      (model) => usedModels.add(model),
+      topicHints
     )
     if (!sentence) continue
     fallback = sentence

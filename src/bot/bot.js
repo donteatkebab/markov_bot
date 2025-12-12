@@ -8,6 +8,12 @@ import { registerTextHandler } from './handlers/text.js'
 import { generateRandomSentence } from '../services/markov.js'
 import { addMessage } from '../data/messages.js'
 import { addLearningGroup, removeLearningGroup } from '../data/learning-groups.js'
+import {
+  addRecentText,
+  getTopicHints,
+  addReplyText,
+  getReplyHints,
+} from './topic-memory.js'
 
 export function createBot({
   botToken,
@@ -29,10 +35,14 @@ export function createBot({
     console.error('Bot error:', err.message, 'update type:', ctx.updateType)
   })
 
-  async function generateNonDuplicate(chatId, maxWords) {
+  async function generateNonDuplicate(chatId, maxWords, extraHints = []) {
     let sentence = ''
+    const topicHints = getTopicHints(state.recentTexts, chatId)
+    const combinedHints = Array.from(
+      new Set([...(topicHints || []), ...(extraHints || [])])
+    )
     for (let i = 0; i < 3; i++) {
-      sentence = await generateRandomSentence(chatId, maxWords)
+      sentence = await generateRandomSentence(chatId, maxWords, combinedHints)
       if (!sentence) return ''
       if (!isDuplicate(state.lastSent, chatId, sentence)) return sentence
     }
@@ -56,6 +66,11 @@ export function createBot({
     generateNonDuplicate,
     safeSend,
     storeSentence: storeSentenceForChat,
+    addTopicSample: (chatId, text) =>
+      addRecentText(state.recentTexts, chatId, text),
+    addReplySample: (chatId, text) =>
+      addReplyText(state.replyTexts, chatId, text),
+    getReplyHints: (chatId) => getReplyHints(state.replyTexts, chatId),
   })
 
   startRandomTalker({
@@ -86,5 +101,7 @@ function createBotState() {
     messageCountSinceRandom: new Map(),
     lastSent: new Map(),
     learningGroups: new Set(),
+    recentTexts: new Map(),
+    replyTexts: new Map(),
   }
 }
