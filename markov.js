@@ -1,13 +1,57 @@
-import { loadAllMessages } from '../data/messages.js'
+import { MongoClient } from 'mongodb'
+import {
+  GEN_CONFIG,
+  MONGO_COLLECTION,
+  MONGO_DB_NAME,
+  MONGO_URI,
+} from './src/config.js'
 
-const GEN_CONFIG = {
-  order: 4,
-  maxHops: 2,
-  maxRepeatAttempts: 3,
+// Safety guard to prevent runaway generation when maxWords is not provided.
+const MAX_GENERATION_GUARD = 200
+
+let client
+let collections
+
+export async function getCollections() {
+  if (collections) return collections
+
+  if (!client) {
+    client = new MongoClient(MONGO_URI)
+  }
+
+  await client.connect()
+  const db = client.db(MONGO_DB_NAME)
+
+  collections = {
+    messages: db.collection(MONGO_COLLECTION),
+    learningGroups: db.collection('learning_groups'),
+  }
+
+  console.log('📦 MongoDB connected:', MONGO_DB_NAME, '/', MONGO_COLLECTION)
+  return collections
 }
 
-// Safety guard to prevent infinite generation when no maxWords is supplied.
-const MAX_GENERATION_GUARD = 200
+async function loadAllMessages() {
+  const { messages } = await getCollections()
+
+  const docs = await messages
+    .find({}, { projection: { messages: 1, _id: 0 } })
+    .toArray()
+
+  const all = []
+
+  for (const doc of docs) {
+    if (!doc || !Array.isArray(doc.messages)) continue
+    for (const t of doc.messages) {
+      if (typeof t !== 'string') continue
+      const trimmed = t.trim()
+      if (!trimmed || trimmed.length === 0) continue
+      all.push(trimmed)
+    }
+  }
+
+  return all
+}
 
 function buildChainForOrder(messages, order) {
   const chain = {}
@@ -203,6 +247,21 @@ function generateFromChain(
   return result.join(' ')
 }
 
+function hasAdjacentRepeats(sentence) {
+  const words = sentence.trim().split(/\s+/).filter(Boolean)
+  if (words.length < 2) return false
+
+  let prevPair = ''
+  for (let i = 0; i < words.length - 1; i++) {
+    if (words[i] === words[i + 1]) return true
+    const pair = `${words[i]} ${words[i + 1]}`
+    if (pair === prevPair) return true
+    prevPair = pair
+  }
+
+  return false
+}
+
 export async function generateRandomSentence(
   chatId,
   maxWords,
@@ -215,11 +274,13 @@ export async function generateRandomSentence(
   const messageSet = new Set(
     messages.map((m) => (typeof m === 'string' ? m.trim() : '')).filter(Boolean)
   )
-  const chain3 = buildChainForOrder(messages, GEN_CONFIG.order)
-  const attempts = [chain3, chain3, chain3]
+  const chain = buildChainForOrder(messages, GEN_CONFIG.order)
+  const attempts = [chain, chain, chain]
   const wordLimit = Number.isFinite(maxWords) ? maxWords : MAX_GENERATION_GUARD
+  const nonStitchRun = Math.random() < 0.3
+  const maxHopsThisRun = nonStitchRun ? 0 : GEN_CONFIG.maxHops
   const genConfig = {
-    maxHops: GEN_CONFIG.maxHops,
+    maxHops: maxHopsThisRun,
     maxRepeatAttempts: GEN_CONFIG.maxRepeatAttempts,
   }
 
@@ -241,21 +302,25 @@ export async function generateRandomSentence(
 
     const cleaned = sentence.trim()
     if (!cleaned || messageSet.has(cleaned)) continue
+    if (hasAdjacentRepeats(cleaned)) continue
 
     finalSentence = sentence
     break
   }
 
   if (finalSentence && log) {
-    const used =
-      attempts.length > 0 ? '3-gram' : 'none'
+    const used = attempts.length > 0 ? `${GEN_CONFIG.order}-gram` : 'none'
     console.log(
       'MARKOV DEBUG:',
       chatId,
       'messages:',
       messages.length,
       'used:',
-      used
+      used,
+      'maxHops:',
+      maxHopsThisRun,
+      'nonStitch:',
+      nonStitchRun
     )
   }
 
@@ -263,20 +328,24 @@ export async function generateRandomSentence(
 }
 
 export async function generateRandomWord(chatId) {
-  const messages = await loadAllMessages()
-  if (!messages || messages.length === 0) return ''
+  const { messages } = await getCollections()
+  const docs = await messages
+    .find({}, { projection: { messages: 1, _id: 0 } })
+    .toArray()
 
   const words = []
-  for (const msg of messages) {
-    if (typeof msg !== 'string') continue
-    const parts = msg.split(/\s+/).filter(Boolean)
-    for (const p of parts) {
-      words.push(p)
+  for (const doc of docs) {
+    if (!doc || !Array.isArray(doc.messages)) continue
+    for (const msg of doc.messages) {
+      if (typeof msg !== 'string') continue
+      const parts = msg.split(/\s+/).filter(Boolean)
+      for (const p of parts) {
+        words.push(p)
+      }
     }
   }
 
   if (words.length === 0) return ''
 
-  const word = words[Math.floor(Math.random() * words.length)]
-  return word
+  return words[Math.floor(Math.random() * words.length)]
 }
