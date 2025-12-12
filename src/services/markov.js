@@ -1,105 +1,101 @@
 import { loadAllMessages } from '../data/messages.js'
 
-function buildChain(messages) {
-  const chain = {}
-  const startKeys = []
+function buildChains(messages) {
+  const chain4 = {}
+  const chain5 = {}
+  const startKeys4 = []
+  const startKeys5 = []
 
   for (const text of messages) {
     const normalized = text.trim()
     if (!normalized) continue
 
-    const sentence = normalized
-    const words = sentence.split(/\s+/).filter(Boolean)
-
+    const words = normalized.split(/\s+/).filter(Boolean)
     if (words.length < 4) continue
 
-    const badEndings = [
-      'به',
-      'تو',
-      'برای',
-      'با',
-      'از',
-      'در',
-      'که',
-      'و',
-      'یا',
-      'تا',
-      'پیش',
-      'روی',
-      'زیر',
-      'توی',
-      'سر',
-      'داخل',
-    ]
-    const lastWord = words[words.length - 1]
-    if (badEndings.includes(lastWord)) {
-      continue
-    }
-
-    const startKey = `${words[0]} ${words[1]} ${words[2]}`
-    startKeys.push(startKey)
+    // 4-gram start (3-word key)
+    startKeys4.push(`${words[0]} ${words[1]} ${words[2]}`)
 
     for (let i = 0; i < words.length - 3; i++) {
-      const w1 = words[i]
-      const w2 = words[i + 1]
-      const w3 = words[i + 2]
-      const w4 = words[i + 3]
+      const key4 = `${words[i]} ${words[i + 1]} ${words[i + 2]}`
+      const next = words[i + 3]
+      if (!chain4[key4]) chain4[key4] = []
+      chain4[key4].push(next)
+    }
 
-      const key = `${w1} ${w2} ${w3}`
+    if (words.length >= 5) {
+      // 5-gram start (4-word key)
+      startKeys5.push(
+        `${words[0]} ${words[1]} ${words[2]} ${words[3]}`
+      )
 
-      if (!chain[key]) {
-        chain[key] = []
+      for (let i = 0; i < words.length - 4; i++) {
+        const key5 = `${words[i]} ${words[i + 1]} ${words[i + 2]} ${words[i + 3]}`
+        const next = words[i + 4]
+        if (!chain5[key5]) chain5[key5] = []
+        chain5[key5].push(next)
       }
-      chain[key].push(w4)
     }
   }
 
-  return { chain, startKeys }
+  return { chain4, chain5, startKeys4, startKeys5 }
 }
 
-function generateFromChain(chain, startKeys, maxWords = 25) {
-  const keys = Object.keys(chain)
-  if (keys.length === 0) return ''
+function chooseStartKey({ chain4, chain5, startKeys4, startKeys5 }) {
+  const keys5 = Object.keys(chain5)
+  const keys4 = Object.keys(chain4)
 
-  let currentKey
-
-  if (Array.isArray(startKeys) && startKeys.length > 0) {
-    const chosen = startKeys[Math.floor(Math.random() * startKeys.length)]
-    if (chain[chosen]) {
-      currentKey = chosen
-    } else {
-      currentKey = keys[Math.floor(Math.random() * keys.length)]
-    }
-  } else {
-    currentKey = keys[Math.floor(Math.random() * keys.length)]
+  if (startKeys5.length > 0) {
+    const chosen = startKeys5[Math.floor(Math.random() * startKeys5.length)]
+    if (chain5[chosen]) return chosen
   }
 
-  const parts = currentKey.split(' ')
-  if (parts.length < 3) return ''
+  if (keys5.length > 0) {
+    return keys5[Math.floor(Math.random() * keys5.length)]
+  }
 
-  const result = [...parts]
+  if (startKeys4.length > 0) {
+    const chosen = startKeys4[Math.floor(Math.random() * startKeys4.length)]
+    if (chain4[chosen]) return chosen
+  }
 
-  for (let i = 0; i < maxWords - 3; i++) {
-    const nextList = chain[currentKey]
-    if (!nextList || nextList.length === 0) break
+  if (keys4.length > 0) {
+    return keys4[Math.floor(Math.random() * keys4.length)]
+  }
 
-    const counts = {}
-    nextList.forEach((w) => (counts[w] = (counts[w] || 0) + 1))
+  return ''
+}
 
-    let weighted = []
-    for (const w of Object.keys(counts)) {
-      const c = counts[w]
-      const weight = Math.max(1, Math.floor(5 / c))
-      for (let k = 0; k < weight; k++) weighted.push(w)
+function generateFromChains(chains, maxWords = 25, onModelUsed) {
+  const startKey = chooseStartKey(chains)
+  if (!startKey) return ''
+
+  const result = startKey.split(' ')
+
+  for (let i = result.length; i < maxWords; i++) {
+    let nextList = null
+    const len = result.length
+
+    if (len >= 4) {
+      const key5 = result.slice(len - 4, len).join(' ')
+      nextList = chains.chain5[key5]
+      if (nextList) {
+        onModelUsed?.('5-gram')
+      }
     }
 
-    const next = weighted[Math.floor(Math.random() * weighted.length)]
+    if (!nextList && len >= 3) {
+      const key4 = result.slice(len - 3, len).join(' ')
+      nextList = chains.chain4[key4]
+      if (nextList) {
+        onModelUsed?.('4-gram')
+      }
+    }
+
+    if (!nextList || nextList.length === 0) break
+
+    const next = nextList[Math.floor(Math.random() * nextList.length)]
     result.push(next)
-
-    const len = result.length
-    currentKey = `${result[len - 3]} ${result[len - 2]} ${result[len - 1]}`
-
-    if (!chain[currentKey]) break
   }
 
   return result.join(' ')
@@ -118,23 +114,41 @@ function looksGood(sentence) {
 
 export async function generateRandomSentence(chatId, maxWords = 25) {
   const messages = await loadAllMessages()
-  console.log('MARKOV DEBUG:', chatId, 'messages:', messages.length)
-
   if (messages.length < 5) return ''
 
-  const { chain, startKeys } = buildChain(messages)
+  const chains = buildChains(messages)
 
   let fallback = ''
+  let usedForFallback = 'none'
+  let chosen = ''
 
   for (let i = 0; i < 3; i++) {
-    const sentence = generateFromChain(chain, startKeys, maxWords)
+    const usedModels = new Set()
+    const sentence = generateFromChains(chains, maxWords, (model) =>
+      usedModels.add(model)
+    )
     if (!sentence) continue
     fallback = sentence
+    usedForFallback =
+      usedModels.size > 0 ? Array.from(usedModels).sort().join(',') : 'none'
 
     if (looksGood(sentence)) {
-      return sentence
+      chosen = sentence
+      break
     }
   }
 
-  return fallback
+  const finalSentence = chosen || fallback
+  if (finalSentence) {
+    console.log(
+      'MARKOV DEBUG:',
+      chatId,
+      'messages:',
+      messages.length,
+      'used:',
+      usedForFallback
+    )
+  }
+
+  return finalSentence
 }
