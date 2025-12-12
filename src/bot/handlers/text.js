@@ -45,8 +45,7 @@ export function registerTextHandler(bot, deps) {
 
       if (isReplyToBot) {
         const replyHints = getHintsFromTexts([text])
-        const topicHints = getTopicHints(chat.id)
-        const hints = Array.from(new Set([...replyHints, ...topicHints]))
+        const hints = replyHints
         const { text: sentence } = await generateResponse(chat.id, {
           maxWords: 25,
           hints,
