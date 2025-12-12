@@ -49,7 +49,6 @@ export function registerTextHandler(bot, deps) {
         if (shouldReply) {
           const hints = getHintsFromTexts([text])
           const { text: sentence } = await generateResponse(chat.id, {
-            maxWords: 25,
             hints,
           })
           if (sentence) {

@@ -30,7 +30,6 @@ export function startRandomTalker({
 
     const hints = getTopicHints(randomChatId)
     const { text } = await generateResponse(randomChatId, {
-      maxWords: 25,
       hints,
     })
     if (!text) return

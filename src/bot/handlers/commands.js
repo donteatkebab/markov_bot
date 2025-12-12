@@ -43,7 +43,6 @@ export function registerCommandHandlers(bot, deps) {
 
     const hints = getTopicHints(ctx.chat.id)
     const { text } = await generateResponse(ctx.chat.id, {
-      maxWords: 25,
       hints,
     })
 

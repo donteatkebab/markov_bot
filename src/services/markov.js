@@ -1,12 +1,13 @@
 import { loadAllMessages } from '../data/messages.js'
 
 const GEN_CONFIG = {
-  order: 3,
-  minWords: 6,
-  maxWords: 25,
+  order: 4,
   maxHops: 2,
   maxRepeatAttempts: 3,
 }
+
+// Safety guard to prevent infinite generation when no maxWords is supplied.
+const MAX_GENERATION_GUARD = 200
 
 function buildChainForOrder(messages, order) {
   const chain = {}
@@ -145,9 +146,9 @@ function pickNext(nextList, prevWord, maxRepeatAttempts) {
   return next
 }
 
-function appendJump(result, jumpStart, maxWords) {
+function appendJump(result, jumpStart, wordLimit) {
   const jumpParts = jumpStart.split(' ')
-  const remaining = maxWords - result.length
+  const remaining = wordLimit - result.length
   if (remaining <= 0) return
 
   const overlapTrimmed =
@@ -162,10 +163,10 @@ function appendJump(result, jumpStart, maxWords) {
 
 function generateFromChain(
   chainData,
-  maxWords,
+  wordLimit,
   onModelUsed,
   topicHints,
-  { minWords, maxHops, maxRepeatAttempts }
+  { maxHops, maxRepeatAttempts }
 ) {
   const startKey = selectStart(chainData, topicHints)
   if (!startKey) return ''
@@ -177,7 +178,7 @@ function generateFromChain(
   const prefixLen = chainData.order - 1
   let hops = 0
 
-  for (let i = result.length; i < maxWords; i++) {
+  for (let i = result.length; i < wordLimit; i++) {
     const len = result.length
     const key = result.slice(len - prefixLen, len).join(' ')
     const nextList = chainData.chain[key]
@@ -188,7 +189,7 @@ function generateFromChain(
       const jumpStart = selectStart(chainData, topicHints)
       if (!jumpStart) break
 
-      appendJump(result, jumpStart, maxWords)
+      appendJump(result, jumpStart, wordLimit)
       hops++
       continue
     }
@@ -202,28 +203,11 @@ function generateFromChain(
   return result.join(' ')
 }
 
-function isAcceptable(sentence, minWords) {
-  const cleaned = sentence.trim()
-  if (!cleaned) return false
-
-  const words = cleaned.split(/\s+/)
-  if (words.length < minWords) return false
-
-  const seenPairs = new Set()
-  for (let i = 0; i < words.length - 1; i++) {
-    const pair = `${words[i]} ${words[i + 1]}`
-    if (seenPairs.has(pair)) return false
-    seenPairs.add(pair)
-  }
-
-  return true
-}
-
 export async function generateRandomSentence(
   chatId,
-  maxWords = GEN_CONFIG.maxWords,
+  maxWords,
   topicHints = [],
-  { log = true, minWords = GEN_CONFIG.minWords } = {}
+  { log = true } = {}
 ) {
   const messages = await loadAllMessages()
   if (messages.length < 5) return ''
@@ -233,9 +217,8 @@ export async function generateRandomSentence(
   )
   const chain3 = buildChainForOrder(messages, GEN_CONFIG.order)
   const attempts = [chain3, chain3, chain3]
+  const wordLimit = Number.isFinite(maxWords) ? maxWords : MAX_GENERATION_GUARD
   const genConfig = {
-    minWords,
-    maxWords,
     maxHops: GEN_CONFIG.maxHops,
     maxRepeatAttempts: GEN_CONFIG.maxRepeatAttempts,
   }
@@ -249,7 +232,7 @@ export async function generateRandomSentence(
 
     const sentence = generateFromChain(
       chainData,
-      maxWords,
+      wordLimit,
       (model) => usedModels.add(model),
       topicHints,
       genConfig
@@ -258,7 +241,6 @@ export async function generateRandomSentence(
 
     const cleaned = sentence.trim()
     if (!cleaned || messageSet.has(cleaned)) continue
-    if (!isAcceptable(cleaned, minWords)) continue
 
     finalSentence = sentence
     break
