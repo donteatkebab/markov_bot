@@ -1,15 +1,6 @@
-const MAX_RECENT_TEXTS = 5
-const MAX_REPLY_TEXTS = 5
 const MAX_HINTS = 5
 
-function addText(map, chatId, text, cap) {
-  const list = map.get(chatId) || []
-  list.push(text)
-  if (list.length > cap) list.shift()
-  map.set(chatId, list)
-}
-
-function computeHints(texts) {
+export function getHintsFromTexts(texts = []) {
   if (!texts || texts.length === 0) return []
 
   const words = texts
@@ -36,22 +27,4 @@ function computeHints(texts) {
     .map(([w]) => w)
 
   return sorted.slice(0, MAX_HINTS)
-}
-
-export function addRecentText(recentMap, chatId, text) {
-  addText(recentMap, chatId, text, MAX_RECENT_TEXTS)
-}
-
-export function getTopicHints(recentMap, chatId) {
-  const texts = recentMap.get(chatId)
-  return computeHints(texts)
-}
-
-export function addReplyText(replyMap, chatId, text) {
-  addText(replyMap, chatId, text, MAX_REPLY_TEXTS)
-}
-
-export function getReplyHints(replyMap, chatId) {
-  const texts = replyMap.get(chatId)
-  return computeHints(texts)
 }

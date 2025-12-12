@@ -1,3 +1,5 @@
+import { getHintsFromTexts } from '../topic-memory.js'
+
 export function registerTextHandler(bot, deps) {
   const {
     state,
@@ -5,9 +7,6 @@ export function registerTextHandler(bot, deps) {
     generateNonDuplicate,
     safeSend,
     storeSentence,
-    addTopicSample,
-    addReplySample,
-    getReplyHints,
   } = deps
 
   bot.on('text', async (ctx) => {
@@ -22,9 +21,6 @@ export function registerTextHandler(bot, deps) {
 
     if (chat.type === 'group' || chat.type === 'supergroup') {
       state.knownGroups.add(chat.id)
-      if (!text.startsWith('/')) {
-        addTopicSample(chat.id, text)
-      }
 
       const isLearningGroup = state.learningGroups.has(chat.id)
 
@@ -46,8 +42,7 @@ export function registerTextHandler(bot, deps) {
         msg.reply_to_message.from.id === ctx.botInfo.id
 
       if (isReplyToBot) {
-        addReplySample(chat.id, text)
-        const replyHints = getReplyHints(chat.id)
+        const replyHints = getHintsFromTexts([text])
         const sentence = await generateNonDuplicate(chat.id, 25, replyHints)
         if (!sentence) return
 
