@@ -11,19 +11,28 @@ export const GEN_CONFIG = {
 const MAX_GENERATION_GUARD = 200
 
 // Anti-recent-repeat buffer (RAM only): prevents sending the same sentence repeatedly
-const RECENT_SENT_MAX = 40
+const RECENT_SENT_MAX = 5
 const recentSentByChat = new Map()
+
+function normalizeForRepeat(text) {
+  if (typeof text !== 'string') return ''
+  // keep emojis and punctuation, just normalize whitespace
+  return text.replace(/\s+/g, ' ').trim()
+}
 
 function isRecentlySent(chatId, sentence) {
   const list = recentSentByChat.get(chatId)
   if (!list || list.length === 0) return false
-  return list.includes(sentence)
+  const normalized = normalizeForRepeat(sentence)
+  if (!normalized) return false
+  return list.includes(normalized)
 }
 
 function rememberSent(chatId, sentence) {
-  if (!sentence) return
+  const normalized = normalizeForRepeat(sentence)
+  if (!normalized) return
   const list = recentSentByChat.get(chatId) || []
-  list.push(sentence)
+  list.push(normalized)
   // keep only the last N
   if (list.length > RECENT_SENT_MAX) list.splice(0, list.length - RECENT_SENT_MAX)
   recentSentByChat.set(chatId, list)
@@ -286,6 +295,7 @@ function generateFromChain(
 
     // جلوگیری از تکرارهای رگباری مثل "A A" که باعث اسپم و تکرار متن می‌شوند
     if (tailHasDuplicateBlock(result, 5)) break
+    if (tailHasExactRepeatedHalves(result, 8)) break
   }
 
   return result.join(' ')
@@ -304,6 +314,31 @@ function hasAdjacentRepeats(sentence) {
   }
 
   return false
+}
+
+function hasExactRepeatedHalves(sentence, minHalfWords = 8) {
+  const words = sentence.trim().split(/\s+/).filter(Boolean)
+  if (words.length < minHalfWords * 2) return false
+  if (words.length % 2 !== 0) return false
+
+  const half = words.length / 2
+  for (let i = 0; i < half; i++) {
+    if (words[i] !== words[i + half]) return false
+  }
+  return true
+}
+
+function tailHasExactRepeatedHalves(wordArray, minHalfWords = 8) {
+  if (!Array.isArray(wordArray)) return false
+  const len = wordArray.length
+  if (len < minHalfWords * 2) return false
+  if (len % 2 !== 0) return false
+
+  const half = len / 2
+  for (let i = 0; i < half; i++) {
+    if (wordArray[i] !== wordArray[i + half]) return false
+  }
+  return true
 }
 
 function hasAdjacentDuplicateBlocks(sentence, minBlockWords = 5) {
@@ -379,6 +414,7 @@ export async function generateRandomSentence(
     if (!cleaned) continue
     if (isRecentlySent(chatId, cleaned)) continue
     if (hasAdjacentRepeats(cleaned)) continue
+    if (hasExactRepeatedHalves(cleaned, 8)) continue
     if (hasAdjacentDuplicateBlocks(cleaned, 5)) continue
 
     finalSentence = sentence
