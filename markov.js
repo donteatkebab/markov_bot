@@ -10,6 +10,25 @@ export const GEN_CONFIG = {
 // Safety guard to prevent runaway generation when maxWords is not provided.
 const MAX_GENERATION_GUARD = 200
 
+// Anti-recent-repeat buffer (RAM only): prevents sending the same sentence repeatedly
+const RECENT_SENT_MAX = 40
+const recentSentByChat = new Map()
+
+function isRecentlySent(chatId, sentence) {
+  const list = recentSentByChat.get(chatId)
+  if (!list || list.length === 0) return false
+  return list.includes(sentence)
+}
+
+function rememberSent(chatId, sentence) {
+  if (!sentence) return
+  const list = recentSentByChat.get(chatId) || []
+  list.push(sentence)
+  // keep only the last N
+  if (list.length > RECENT_SENT_MAX) list.splice(0, list.length - RECENT_SENT_MAX)
+  recentSentByChat.set(chatId, list)
+}
+
 let client
 let collections
 
@@ -33,10 +52,31 @@ export async function getCollections() {
 }
 
 async function loadAllMessages() {
-  const { messages } = await getCollections()
+  const { messages, learningGroups } = await getCollections()
+
+  // فقط گروه‌هایی که train روی آن‌ها فعال شده، اجازه‌ی تغذیه‌ی مدل را دارند
+  const allowedDocs = await learningGroups
+    .find({}, { projection: { chatId: 1, _id: 0 } })
+    .toArray()
+
+  const allowedIds = allowedDocs
+    .map((d) => (d && d.chatId != null ? String(d.chatId) : ''))
+    .filter(Boolean)
+
+  if (allowedIds.length === 0) return []
+
+  // chatId ممکن است به صورت Number یا String ذخیره شده باشد، برای اطمینان هر دو را می‌سازیم
+  const allowedAsNumbers = allowedIds
+    .map((id) => Number(id))
+    .filter((n) => Number.isFinite(n))
+
+  const query =
+    allowedAsNumbers.length > 0
+      ? { chatId: { $in: [...allowedIds, ...allowedAsNumbers] } }
+      : { chatId: { $in: allowedIds } }
 
   const docs = await messages
-    .find({}, { projection: { messages: 1, _id: 0 } })
+    .find(query, { projection: { messages: 1, _id: 0 } })
     .toArray()
 
   const all = []
@@ -243,6 +283,9 @@ function generateFromChain(
     const next = pickNext(nextList, prev, maxRepeatAttempts)
     if (!next) break
     result.push(next)
+
+    // جلوگیری از تکرارهای رگباری مثل "A A" که باعث اسپم و تکرار متن می‌شوند
+    if (tailHasDuplicateBlock(result, 5)) break
   }
 
   return result.join(' ')
@@ -263,6 +306,40 @@ function hasAdjacentRepeats(sentence) {
   return false
 }
 
+function hasAdjacentDuplicateBlocks(sentence, minBlockWords = 5) {
+  const words = sentence.trim().split(/\s+/).filter(Boolean)
+  if (words.length < minBlockWords * 2) return false
+
+  const maxBlockWords = Math.min(20, Math.floor(words.length / 2))
+
+  // Detect any adjacent repeated block: [block][block]
+  for (let blockLen = minBlockWords; blockLen <= maxBlockWords; blockLen++) {
+    for (let i = 0; i <= words.length - blockLen * 2; i++) {
+      const a = words.slice(i, i + blockLen).join(' ')
+      const b = words.slice(i + blockLen, i + blockLen * 2).join(' ')
+      if (a === b) return true
+    }
+  }
+
+  return false
+}
+
+function tailHasDuplicateBlock(wordArray, minBlockWords = 5) {
+  if (!Array.isArray(wordArray)) return false
+  const len = wordArray.length
+  if (len < minBlockWords * 2) return false
+
+  const maxBlockWords = Math.min(20, Math.floor(len / 2))
+
+  // Only check the tail to keep it cheap
+  for (let blockLen = minBlockWords; blockLen <= maxBlockWords; blockLen++) {
+    const a = wordArray.slice(len - blockLen * 2, len - blockLen).join(' ')
+    const b = wordArray.slice(len - blockLen, len).join(' ')
+    if (a === b) return true
+  }
+  return false
+}
+
 export async function generateRandomSentence(
   chatId,
   maxWords,
@@ -272,9 +349,6 @@ export async function generateRandomSentence(
   const messages = await loadAllMessages()
   if (messages.length < 5) return ''
 
-  const messageSet = new Set(
-    messages.map((m) => (typeof m === 'string' ? m.trim() : '')).filter(Boolean)
-  )
   const chain = buildChainForOrder(messages, GEN_CONFIG.order)
   const attempts = [chain, chain, chain]
   const wordLimit = Number.isFinite(maxWords) ? maxWords : MAX_GENERATION_GUARD
@@ -302,10 +376,13 @@ export async function generateRandomSentence(
     if (!sentence) continue
 
     const cleaned = sentence.trim()
-    if (!cleaned || messageSet.has(cleaned)) continue
+    if (!cleaned) continue
+    if (isRecentlySent(chatId, cleaned)) continue
     if (hasAdjacentRepeats(cleaned)) continue
+    if (hasAdjacentDuplicateBlocks(cleaned, 5)) continue
 
     finalSentence = sentence
+    rememberSent(chatId, cleaned)
     break
   }
 

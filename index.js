@@ -25,6 +25,9 @@ const MIN_REPEAT_MS = 10 * 60 * 1000 // 10 minutes
 const MAX_HINTS = 5
 const MAX_TOPIC_TEXTS = 5
 
+// Prevent storing identical consecutive messages per chat (RAM only)
+const lastStoredByChat = new Map()
+
 function createBotState() {
   return {
     knownGroups: new Set(),
@@ -125,6 +128,26 @@ function getHintsFromTexts(texts = []) {
   return sorted.slice(0, MAX_HINTS)
 }
 
+function collapseRepeatedHalves(text) {
+  if (typeof text !== 'string') return text
+  const words = text.split(/\s+/).filter(Boolean)
+  if (words.length < 6) return text // too short, ignore
+
+  // If the message is exactly two identical halves, keep only the first half.
+  // Repeat up to 2 times in case of triple-like patterns that become double after first collapse.
+  let current = words
+  for (let iter = 0; iter < 2; iter++) {
+    if (current.length % 2 !== 0) break
+    const half = current.length / 2
+    const a = current.slice(0, half).join(' ')
+    const b = current.slice(half).join(' ')
+    if (a !== b) break
+    current = current.slice(0, half)
+  }
+
+  return current.join(' ')
+}
+
 function addTopicText(map, chatId, text) {
   const list = map.get(chatId) || []
   list.push(text)
@@ -173,6 +196,13 @@ async function addMessage(chatId, text) {
   cleaned = cleaned.replace(/\s+/g, ' ').trim()
 
   if (!cleaned || cleaned.length < 2) return
+
+  cleaned = collapseRepeatedHalves(cleaned)
+
+  // Skip storing identical consecutive messages for this chat
+  const prev = lastStoredByChat.get(chatId)
+  if (prev === cleaned) return
+  lastStoredByChat.set(chatId, cleaned)
 
   const { messages } = await getCollections()
   const key = String(chatId)
