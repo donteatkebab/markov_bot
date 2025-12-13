@@ -1,10 +1,11 @@
 import { MongoClient } from 'mongodb'
-import {
-  GEN_CONFIG,
-  MONGO_COLLECTION,
-  MONGO_DB_NAME,
-  MONGO_URI,
-} from './src/config.js'
+import { MONGO_COLLECTION, MONGO_DB_NAME, MONGO_URI } from './src/config.js'
+
+export const GEN_CONFIG = {
+  order: 4,
+  maxHops: 1,
+  maxRepeatAttempts: 3,
+}
 
 // Safety guard to prevent runaway generation when maxWords is not provided.
 const MAX_GENERATION_GUARD = 200
