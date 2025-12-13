@@ -23,7 +23,7 @@ export const MONGO_URI = requiredEnv.MONGO_URI
 export const MONGO_DB_NAME = 'markov_bot'
 export const MONGO_COLLECTION = 'groups'
 
-export const PORT = 3000
+export const PORT = Number(process.env.PORT || 3000)
 
 export const RANDOM_TALK_CHANCE = 0.2
 export const RANDOM_TALK_INTERVAL_MS = 90 * 1000
