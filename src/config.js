@@ -33,7 +33,6 @@ export const RANDOM_TALK_REQUIRED_MESSAGES = 10
 export const DAILY_TIMEZONE = 'Asia/Tehran'
 
 export const GEN_CONFIG = {
-  order: 3,
+  order: 4,
   maxHops: 1,
-  maxRepeatAttempts: 3,
 }

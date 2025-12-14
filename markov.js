@@ -1,11 +1,10 @@
 import { MongoClient } from 'mongodb'
-import { MONGO_COLLECTION, MONGO_DB_NAME, MONGO_URI } from './src/config.js'
-
-export const GEN_CONFIG = {
-  order: 4,
-  maxHops: 1,
-  maxRepeatAttempts: 3,
-}
+import {
+  MONGO_COLLECTION,
+  MONGO_DB_NAME,
+  MONGO_URI,
+  GEN_CONFIG,
+} from './src/config.js'
 
 // Safety guard to prevent runaway generation when maxWords is not provided.
 const MAX_GENERATION_GUARD = 200
@@ -385,7 +384,6 @@ export async function generateRandomSentence(
   if (messages.length < 5) return ''
 
   const chain = buildChainForOrder(messages, GEN_CONFIG.order)
-  const attempts = [chain, chain, chain]
   const wordLimit = Number.isFinite(maxWords) ? maxWords : MAX_GENERATION_GUARD
   const nonStitchRun = Math.random() < 0.3
   const maxHopsThisRun = nonStitchRun ? 0 : GEN_CONFIG.maxHops
@@ -396,34 +394,36 @@ export async function generateRandomSentence(
 
   let finalSentence = ''
 
-  for (const chainData of attempts) {
+  {
+    const chainData = chain
     const usedModels = new Set()
     const hasChain = Object.keys(chainData.chain).length > 0
-    if (!hasChain) break
-
-    const sentence = generateFromChain(
-      chainData,
-      wordLimit,
-      (model) => usedModels.add(model),
-      topicHints,
-      genConfig
-    )
-    if (!sentence) continue
-
-    const cleaned = sentence.trim()
-    if (!cleaned) continue
-    if (isRecentlySent(chatId, cleaned)) continue
-    if (hasAdjacentRepeats(cleaned)) continue
-    if (hasExactRepeatedHalves(cleaned, 8)) continue
-    if (hasAdjacentDuplicateBlocks(cleaned, 5)) continue
-
-    finalSentence = sentence
-    rememberSent(chatId, cleaned)
-    break
+    if (hasChain) {
+      const sentence = generateFromChain(
+        chainData,
+        wordLimit,
+        (model) => usedModels.add(model),
+        topicHints,
+        genConfig
+      )
+      if (sentence) {
+        const cleaned = sentence.trim()
+        if (
+          cleaned &&
+          !isRecentlySent(chatId, cleaned) &&
+          !hasAdjacentRepeats(cleaned) &&
+          !hasExactRepeatedHalves(cleaned, 8) &&
+          !hasAdjacentDuplicateBlocks(cleaned, 5)
+        ) {
+          finalSentence = sentence
+          rememberSent(chatId, cleaned)
+        }
+      }
+    }
   }
 
   if (finalSentence && log) {
-    const used = attempts.length > 0 ? `${GEN_CONFIG.order}-gram` : 'none'
+    const used = chain ? `${GEN_CONFIG.order}-gram` : 'none'
     console.log(
       'MARKOV DEBUG:',
       chatId,
@@ -463,4 +463,3 @@ export async function generateRandomWord(chatId) {
 
   return words[Math.floor(Math.random() * words.length)]
 }
-
