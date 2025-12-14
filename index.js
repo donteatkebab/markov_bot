@@ -350,7 +350,7 @@ function registerTextHandler(bot, deps) {
         msg.reply_to_message.from.id === ctx.botInfo.id
 
       if (!text.startsWith('/')) {
-        const shouldReply = isReplyToBot || Math.random() < 0.05
+        const shouldReply = isReplyToBot || Math.random() < 0.025
 
         if (shouldReply) {
           const hints = getHintsFromTexts([text])

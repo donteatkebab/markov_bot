@@ -463,3 +463,4 @@ export async function generateRandomWord(chatId) {
 
   return words[Math.floor(Math.random() * words.length)]
 }
+
