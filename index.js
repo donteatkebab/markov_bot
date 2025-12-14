@@ -22,8 +22,6 @@ import {
 const defaultDebug = process.env.MARKOV_DEBUG !== '0'
 const MAX_BUFFER = 25
 const MIN_REPEAT_MS = 10 * 60 * 1000 // 10 minutes
-const MAX_HINTS = 5
-const MAX_TOPIC_TEXTS = 5
 
 // Prevent storing identical consecutive messages per chat (RAM only)
 const lastStoredByChat = new Map()
@@ -35,7 +33,6 @@ function createBotState() {
     messageCountSinceRandom: new Map(),
     lastSent: new Map(),
     learningGroups: new Set(),
-    topicTexts: new Map(),
   }
 }
 
@@ -99,35 +96,6 @@ function storeSentence(lastSent, chatId, sentence) {
   lastSent.set(chatId, entries)
 }
 
-function getHintsFromTexts(texts = []) {
-  if (!texts || texts.length === 0) return []
-
-  const words = texts
-    .join(' ')
-    .toLowerCase()
-    .split(/\s+/)
-    .map((w) => w.replace(/[^a-zA-Z0-9_\u0600-\u06FF]+/g, ''))
-    .filter(
-      (w) =>
-        w &&
-        w.length >= 3 &&
-        !w.startsWith('@') &&
-        !w.startsWith('http') &&
-        !w.startsWith('www')
-    )
-
-  const counts = new Map()
-  for (const w of words) {
-    counts.set(w, (counts.get(w) || 0) + 1)
-  }
-
-  const sorted = Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([w]) => w)
-
-  return sorted.slice(0, MAX_HINTS)
-}
-
 function collapseRepeatedHalves(text) {
   if (typeof text !== 'string') return text
   const words = text.split(/\s+/).filter(Boolean)
@@ -146,40 +114,6 @@ function collapseRepeatedHalves(text) {
   }
 
   return current.join(' ')
-}
-
-function addTopicText(map, chatId, text) {
-  const list = map.get(chatId) || []
-  list.push(text)
-  if (list.length > MAX_TOPIC_TEXTS) list.shift()
-  map.set(chatId, list)
-}
-
-function getTopicHints(map, chatId) {
-  const texts = map.get(chatId) || []
-  return getHintsFromTexts(texts)
-}
-
-function createResponder(lastSentMap) {
-  return async function generateResponse(
-    chatId,
-    { maxWords, hints = [], debug = defaultDebug } = {}
-  ) {
-    let lastCandidate = ''
-
-    for (let i = 0; i < 3; i++) {
-      const candidate = await generateRandomSentence(chatId, maxWords, hints, {
-        log: debug,
-      })
-      if (!candidate) continue
-      lastCandidate = candidate
-      if (!isDuplicate(lastSentMap, chatId, candidate)) {
-        return { text: candidate, strategy: 'markov' }
-      }
-    }
-
-    return { text: lastCandidate, strategy: 'none' }
-  }
 }
 
 async function addMessage(chatId, text) {
@@ -258,7 +192,6 @@ function registerCommandHandlers(bot, deps) {
     storeSentenceFn,
     addLearningGroupFn,
     removeLearningGroupFn,
-    getTopicHintsFn,
   } = deps
 
   bot.command(botStrings.TRAIN_CMD, async (ctx) => {
@@ -291,10 +224,7 @@ function registerCommandHandlers(bot, deps) {
     if (ctx.from.id !== ownerId) return
     if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
-    const hints = getTopicHintsFn(ctx.chat.id)
-    const { text } = await generateResponse(ctx.chat.id, {
-      hints,
-    })
+    const { text } = await generateResponse(ctx.chat.id)
 
     if (!text) {
       safeSend(ctx.chat.id, botStrings.NEED_MORE_DATA)
@@ -313,8 +243,6 @@ function registerTextHandler(bot, deps) {
     generateResponse,
     safeSend,
     storeSentenceFn,
-    addTopicSample,
-    getTopicHintsFn,
   } = deps
 
   bot.on('text', async (ctx) => {
@@ -353,17 +281,12 @@ function registerTextHandler(bot, deps) {
         const shouldReply = isReplyToBot || Math.random() < 0.025
 
         if (shouldReply) {
-          const hints = getHintsFromTexts([text])
-          const { text: sentence } = await generateResponse(chat.id, {
-            hints,
-          })
+          const { text: sentence } = await generateResponse(chat.id)
           if (sentence) {
             safeSend(chat.id, sentence, msg.message_id)
             storeSentenceFn(chat.id, sentence)
           }
         }
-
-        addTopicSample(chat.id, text)
       }
     }
   })
@@ -372,7 +295,6 @@ function registerTextHandler(bot, deps) {
 function startRandomTalker({
   state,
   generateResponse,
-  getTopicHintsFn,
   safeSend,
   storeSentenceFn,
   chance,
@@ -399,10 +321,7 @@ function startRandomTalker({
     const randomChatId =
       activeGroups[Math.floor(Math.random() * activeGroups.length)]
 
-    const hints = getTopicHintsFn(randomChatId)
-    const { text } = await generateResponse(randomChatId, {
-      hints,
-    })
+    const { text } = await generateResponse(randomChatId)
     if (!text) return
 
     try {
@@ -470,7 +389,6 @@ function createBot({
     storeSentenceFn: storeSentenceForChat,
     addLearningGroupFn: addLearningGroup,
     removeLearningGroupFn: removeLearningGroup,
-    getTopicHintsFn: (chatId) => getTopicHints(state.topicTexts, chatId),
   })
 
   registerTextHandler(bot, {
@@ -479,15 +397,11 @@ function createBot({
     generateResponse,
     safeSend,
     storeSentenceFn: storeSentenceForChat,
-    addTopicSample: (chatId, text) =>
-      addTopicText(state.topicTexts, chatId, text),
-    getTopicHintsFn: (chatId) => getTopicHints(state.topicTexts, chatId),
   })
 
   startRandomTalker({
     state,
     generateResponse,
-    getTopicHintsFn: (chatId) => getTopicHints(state.topicTexts, chatId),
     safeSend,
     storeSentenceFn: storeSentenceForChat,
     chance: randomConfig.chance,
@@ -539,3 +453,25 @@ main().catch((err) => {
 
 process.once('SIGINT', () => botInstance?.stop('SIGINT'))
 process.once('SIGTERM', () => botInstance?.stop('SIGTERM'))
+
+function createResponder(lastSentMap) {
+  return async function generateResponse(
+    chatId,
+    { maxWords, debug = defaultDebug } = {}
+  ) {
+    let lastCandidate = ''
+
+    for (let i = 0; i < 3; i++) {
+      const candidate = await generateRandomSentence(chatId, maxWords, {
+        log: debug,
+      })
+      if (!candidate) continue
+      lastCandidate = candidate
+      if (!isDuplicate(lastSentMap, chatId, candidate)) {
+        return { text: candidate, strategy: 'markov' }
+      }
+    }
+
+    return { text: lastCandidate, strategy: 'none' }
+  }
+}

@@ -128,25 +128,12 @@ function buildChainForOrder(messages, order) {
   return { chain, startKeys, order }
 }
 
-function chooseStartKey({ chain, startKeys }, topicHints = []) {
+function chooseStartKey({ chain, startKeys }) {
   const keys = Object.keys(chain)
-  const hints = Array.isArray(topicHints)
-    ? topicHints.map((h) => h.toLowerCase())
-    : []
-
-  const preferHints = (keyList) =>
-    hints.length === 0
-      ? []
-      : keyList.filter((k) => {
-        const lower = k.toLowerCase()
-        return hints.some((h) => lower.includes(h))
-      })
 
   const pick = (keyList) => {
-    const filtered = preferHints(keyList)
-    const pool = filtered.length > 0 ? filtered : keyList
-    if (pool.length === 0) return ''
-    return pool[Math.floor(Math.random() * pool.length)]
+    if (!Array.isArray(keyList) || keyList.length === 0) return ''
+    return keyList[Math.floor(Math.random() * keyList.length)]
   }
 
   if (startKeys.length > 0) {
@@ -162,11 +149,7 @@ function chooseStartKey({ chain, startKeys }, topicHints = []) {
   return ''
 }
 
-function chooseStitchedStart(chainData, topicHints = []) {
-  const hints = Array.isArray(topicHints)
-    ? topicHints.map((h) => h.toLowerCase())
-    : []
-
+function chooseStitchedStart(chainData) {
   const keys = Array.isArray(chainData.startKeys)
     ? chainData.startKeys
     : Object.keys(chainData.chain)
@@ -181,12 +164,9 @@ function chooseStitchedStart(chainData, topicHints = []) {
     if (parts.length < prefixLen || groupLen >= parts.length) continue
     const prefix = parts.slice(0, groupLen).join(' ')
     const variant = parts[groupLen]
-    const lower = key.toLowerCase()
-    const hasHint = hints.length > 0 && hints.some((h) => lower.includes(h))
 
-    const entry = byPrefix.get(prefix) || { words: new Set(), hasHint: false }
+    const entry = byPrefix.get(prefix) || { words: new Set() }
     entry.words.add(variant)
-    entry.hasHint = entry.hasHint || hasHint
     byPrefix.set(prefix, entry)
   }
 
@@ -195,12 +175,7 @@ function chooseStitchedStart(chainData, topicHints = []) {
   )
   if (candidates.length === 0) return ''
 
-  const hinted = hints.length
-    ? candidates.filter(([, entry]) => entry.hasHint)
-    : []
-
-  const pool = hinted.length > 0 ? hinted : candidates
-  const [prefix, entry] = pool[Math.floor(Math.random() * pool.length)]
+  const [prefix, entry] = candidates[Math.floor(Math.random() * candidates.length)]
 
   const words = Array.from(entry.words)
   const first = words[Math.floor(Math.random() * words.length)]
@@ -214,11 +189,8 @@ function chooseStitchedStart(chainData, topicHints = []) {
   return `${prefix} ${second}`.trim()
 }
 
-function selectStart(chainData, topicHints) {
-  return (
-    chooseStitchedStart(chainData, topicHints) ||
-    chooseStartKey(chainData, topicHints)
-  )
+function selectStart(chainData) {
+  return chooseStitchedStart(chainData) || chooseStartKey(chainData)
 }
 
 function pickNext(nextList, prevWord, maxRepeatAttempts) {
@@ -258,10 +230,9 @@ function generateFromChain(
   chainData,
   wordLimit,
   onModelUsed,
-  topicHints,
   { maxHops, maxRepeatAttempts }
 ) {
-  const startKey = selectStart(chainData, topicHints)
+  const startKey = selectStart(chainData)
   if (!startKey) return ''
 
   const modelName = `${chainData.order}-gram`
@@ -279,7 +250,7 @@ function generateFromChain(
     if (!nextList || nextList.length === 0) {
       if (hops >= maxHops) break
 
-      const jumpStart = selectStart(chainData, topicHints)
+      const jumpStart = selectStart(chainData)
       if (!jumpStart) break
 
       appendJump(result, jumpStart, wordLimit)
@@ -293,15 +264,30 @@ function generateFromChain(
     result.push(next)
 
     // جلوگیری از تکرارهای رگباری مثل "A A" که باعث اسپم و تکرار متن می‌شوند
-    if (tailHasDuplicateBlock(result, 5)) break
-    if (tailHasExactRepeatedHalves(result, 8)) break
+    if (hasMultiWordTailLoop(result, 5)) break
+    if (hasLongTailLoop(result, 8)) break
   }
 
   return result.join(' ')
 }
 
-function hasAdjacentRepeats(sentence) {
-  const words = sentence.trim().split(/\s+/).filter(Boolean)
+function normalizeToken(t) {
+  if (typeof t !== 'string') return ''
+  return (
+    t
+      // normalize Arabic/Persian variants
+      .replace(/ك/g, 'ک')
+      .replace(/ي/g, 'ی')
+      // collapse repeated dots/ellipses
+      .replace(/[.٫،,]{2,}/g, '.')
+      .replace(/…+/g, '…')
+      // trim
+      .trim()
+  )
+}
+
+function hasShortTailLoop(sentence) {
+  const words = sentence.trim().split(/\s+/).filter(Boolean).map(normalizeToken)
   if (words.length < 2) return false
 
   let prevPair = ''
@@ -315,14 +301,16 @@ function hasAdjacentRepeats(sentence) {
   return false
 }
 
-function tailHasExactRepeatedHalves(wordArray, minHalfWords = 8) {
+function hasLongTailLoop(wordArray, minHalfWords = 8) {
   if (!Array.isArray(wordArray)) return false
   const len = wordArray.length
   if (len < minHalfWords * 2) return false
 
   // Only inspect the tail to keep it cheap and truly "tail"-based
-  const tailWindow = 80
-  const tail = wordArray.slice(Math.max(0, len - tailWindow))
+  const tailWindow = 200
+  const tail = wordArray
+    .slice(Math.max(0, len - tailWindow))
+    .map((t) => normalizeToken(String(t)))
   const tlen = tail.length
   if (tlen < minHalfWords * 2) return false
 
@@ -339,10 +327,10 @@ function tailHasExactRepeatedHalves(wordArray, minHalfWords = 8) {
 }
 
 function hasAdjacentDuplicateBlocks(sentence, minBlockWords = 5) {
-  const words = sentence.trim().split(/\s+/).filter(Boolean)
+  const words = sentence.trim().split(/\s+/).filter(Boolean).map(normalizeToken)
   if (words.length < minBlockWords * 2) return false
 
-  const maxBlockWords = Math.min(20, Math.floor(words.length / 2))
+  const maxBlockWords = Math.min(60, Math.floor(words.length / 2))
 
   // Detect any adjacent repeated block: [block][block]
   for (let blockLen = minBlockWords; blockLen <= maxBlockWords; blockLen++) {
@@ -356,19 +344,21 @@ function hasAdjacentDuplicateBlocks(sentence, minBlockWords = 5) {
   return false
 }
 
-function tailHasDuplicateBlock(wordArray, minBlockWords = 5) {
+function hasMultiWordTailLoop(wordArray, minBlockWords = 5) {
   if (!Array.isArray(wordArray)) return false
   const len = wordArray.length
   if (len < minBlockWords * 2) return false
 
   // Only inspect the tail to keep it cheap
-  const tailWindow = 80
-  const tail = wordArray.slice(Math.max(0, len - tailWindow))
+  const tailWindow = 200
+  const tail = wordArray
+    .slice(Math.max(0, len - tailWindow))
+    .map((t) => normalizeToken(String(t)))
   const tlen = tail.length
   if (tlen < minBlockWords * 2) return false
 
   // allow longer blocks in the tail without scanning the whole sentence
-  const maxBlockWords = Math.min(40, Math.floor(tlen / 2))
+  const maxBlockWords = Math.min(100, Math.floor(tlen / 2))
 
   for (let blockLen = minBlockWords; blockLen <= maxBlockWords; blockLen++) {
     const a = tail.slice(tlen - blockLen * 2, tlen - blockLen).join(' ')
@@ -382,7 +372,6 @@ function tailHasDuplicateBlock(wordArray, minBlockWords = 5) {
 export async function generateRandomSentence(
   chatId,
   maxWords,
-  topicHints = [],
   { log = true } = {}
 ) {
   const messages = await loadAllMessages()
@@ -408,7 +397,6 @@ export async function generateRandomSentence(
         chainData,
         wordLimit,
         (model) => usedModels.add(model),
-        topicHints,
         genConfig
       )
       if (sentence) {
@@ -416,7 +404,7 @@ export async function generateRandomSentence(
         if (
           cleaned &&
           !isRecentlySent(chatId, cleaned) &&
-          !hasAdjacentRepeats(cleaned) &&
+          !hasShortTailLoop(cleaned) &&
           !hasAdjacentDuplicateBlocks(cleaned, 5)
         ) {
           finalSentence = sentence
