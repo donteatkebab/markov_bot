@@ -315,29 +315,27 @@ function hasAdjacentRepeats(sentence) {
   return false
 }
 
-function hasExactRepeatedHalves(sentence, minHalfWords = 8) {
-  const words = sentence.trim().split(/\s+/).filter(Boolean)
-  if (words.length < minHalfWords * 2) return false
-  if (words.length % 2 !== 0) return false
-
-  const half = words.length / 2
-  for (let i = 0; i < half; i++) {
-    if (words[i] !== words[i + half]) return false
-  }
-  return true
-}
-
 function tailHasExactRepeatedHalves(wordArray, minHalfWords = 8) {
   if (!Array.isArray(wordArray)) return false
   const len = wordArray.length
   if (len < minHalfWords * 2) return false
-  if (len % 2 !== 0) return false
 
-  const half = len / 2
-  for (let i = 0; i < half; i++) {
-    if (wordArray[i] !== wordArray[i + half]) return false
+  // Only inspect the tail to keep it cheap and truly "tail"-based
+  const tailWindow = 80
+  const tail = wordArray.slice(Math.max(0, len - tailWindow))
+  const tlen = tail.length
+  if (tlen < minHalfWords * 2) return false
+
+  const maxBlock = Math.floor(tlen / 2)
+
+  // If the last [block][block] occurs at the end, we consider it a bad repeat.
+  for (let blockLen = minHalfWords; blockLen <= maxBlock; blockLen++) {
+    const a = tail.slice(tlen - blockLen * 2, tlen - blockLen).join(' ')
+    const b = tail.slice(tlen - blockLen, tlen).join(' ')
+    if (a === b) return true
   }
-  return true
+
+  return false
 }
 
 function hasAdjacentDuplicateBlocks(sentence, minBlockWords = 5) {
@@ -363,14 +361,21 @@ function tailHasDuplicateBlock(wordArray, minBlockWords = 5) {
   const len = wordArray.length
   if (len < minBlockWords * 2) return false
 
-  const maxBlockWords = Math.min(20, Math.floor(len / 2))
+  // Only inspect the tail to keep it cheap
+  const tailWindow = 80
+  const tail = wordArray.slice(Math.max(0, len - tailWindow))
+  const tlen = tail.length
+  if (tlen < minBlockWords * 2) return false
 
-  // Only check the tail to keep it cheap
+  // allow longer blocks in the tail without scanning the whole sentence
+  const maxBlockWords = Math.min(40, Math.floor(tlen / 2))
+
   for (let blockLen = minBlockWords; blockLen <= maxBlockWords; blockLen++) {
-    const a = wordArray.slice(len - blockLen * 2, len - blockLen).join(' ')
-    const b = wordArray.slice(len - blockLen, len).join(' ')
+    const a = tail.slice(tlen - blockLen * 2, tlen - blockLen).join(' ')
+    const b = tail.slice(tlen - blockLen, tlen).join(' ')
     if (a === b) return true
   }
+
   return false
 }
 
@@ -412,7 +417,6 @@ export async function generateRandomSentence(
           cleaned &&
           !isRecentlySent(chatId, cleaned) &&
           !hasAdjacentRepeats(cleaned) &&
-          !hasExactRepeatedHalves(cleaned, 8) &&
           !hasAdjacentDuplicateBlocks(cleaned, 5)
         ) {
           finalSentence = sentence
