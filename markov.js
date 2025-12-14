@@ -347,24 +347,6 @@ function hasLongTailLoop(wordArray, minHalfWords = 8) {
   return false
 }
 
-function hasAdjacentDuplicateBlocks(sentence, minBlockWords = 5) {
-  const words = sentence.trim().split(/\s+/).filter(Boolean).map(normalizeToken)
-  if (words.length < minBlockWords * 2) return false
-
-  const maxBlockWords = Math.min(60, Math.floor(words.length / 2))
-
-  // Detect any adjacent repeated block: [block][block]
-  for (let blockLen = minBlockWords; blockLen <= maxBlockWords; blockLen++) {
-    for (let i = 0; i <= words.length - blockLen * 2; i++) {
-      const a = words.slice(i, i + blockLen).join(' ')
-      const b = words.slice(i + blockLen, i + blockLen * 2).join(' ')
-      if (a === b) return true
-    }
-  }
-
-  return false
-}
-
 function hasMultiWordTailLoop(wordArray, minBlockWords = 5) {
   if (!Array.isArray(wordArray)) return false
   const len = wordArray.length
@@ -400,7 +382,7 @@ export async function generateRandomSentence(
 
   const chain = buildChainForOrder(messages, GEN_CONFIG.order)
   const wordLimit = Number.isFinite(maxWords) ? maxWords : MAX_GENERATION_GUARD
-  const nonStitchRun = Math.random() < 0.3
+  const nonStitchRun = Math.random() < 0.4
   const maxHopsThisRun = nonStitchRun ? 0 : GEN_CONFIG.maxHops
   const genConfig = {
     maxHops: maxHopsThisRun,
@@ -425,8 +407,7 @@ export async function generateRandomSentence(
         if (
           cleaned &&
           !isRecentlySent(chatId, cleaned) &&
-          !hasShortTailLoop(cleaned) &&
-          !hasAdjacentDuplicateBlocks(cleaned, 5)
+          !hasShortTailLoop(cleaned)
         ) {
           finalSentence = sentence
           rememberSent(chatId, cleaned)
