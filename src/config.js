@@ -29,7 +29,7 @@ export const RANDOM_TALK_CHANCE = 0.15
 export const RANDOM_TALK_INTERVAL_MS = 60 * 1000
 export const RANDOM_TALK_ACTIVE_WINDOW_MS = 15 * 60 * 1000
 export const RANDOM_TALK_REQUIRED_MESSAGES = 10
-export const RANDOM_REPLY_CHANCE = 0.015
+export const RANDOM_REPLY_CHANCE = 0.01
 
 export const DAILY_TIMEZONE = 'Asia/Tehran'
 
