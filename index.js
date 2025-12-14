@@ -13,6 +13,7 @@ import {
   RANDOM_TALK_ACTIVE_WINDOW_MS,
   RANDOM_TALK_REQUIRED_MESSAGES,
   DAILY_TIMEZONE,
+  RANDOM_REPLY_CHANCE,
 } from './src/config.js'
 import {
   generateRandomSentence,
@@ -316,7 +317,7 @@ function registerTextHandler(bot, deps) {
         msg.reply_to_message.from.id === ctx.botInfo.id
 
       if (!text.startsWith('/')) {
-        const shouldReply = isReplyToBot || Math.random() < 0.025
+        const shouldReply = isReplyToBot || Math.random() < RANDOM_REPLY_CHANCE
 
         if (shouldReply) {
           // Related reply: use the user's message as the seed, but still generate Markov (not a copy)
