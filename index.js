@@ -16,6 +16,7 @@ import {
 } from './src/config.js'
 import {
   generateRandomSentence,
+  generateRelatedSentence,
   getCollections,
 } from './markov.js'
 
@@ -278,7 +279,6 @@ function registerTextHandler(bot, deps) {
   const {
     state,
     addMessageFn,
-    generateResponse,
     safeSend,
     storeSentenceFn,
   } = deps
@@ -319,7 +319,11 @@ function registerTextHandler(bot, deps) {
         const shouldReply = isReplyToBot || Math.random() < 0.025
 
         if (shouldReply) {
-          const { text: sentence } = await generateResponse(chat.id)
+          // Related reply: use the user's message as the seed, but still generate Markov (not a copy)
+          const sentence = await generateRelatedSentence(chat.id, text, undefined, {
+            log: defaultDebug,
+          })
+
           if (sentence) {
             safeSend(chat.id, sentence, msg.message_id)
             storeSentenceFn(chat.id, sentence)
@@ -432,7 +436,6 @@ function createBot({
   registerTextHandler(bot, {
     state,
     addMessageFn: addMessage,
-    generateResponse,
     safeSend,
     storeSentenceFn: storeSentenceForChat,
   })
