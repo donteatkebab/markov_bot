@@ -717,24 +717,18 @@ export async function generateRandomSentence(
 }
 
 export async function generateRandomWord(chatId) {
-  const { messages } = await getCollections()
-  const docs = await messages
-    .find({}, { projection: { messages: 1, _id: 0 } })
-    .toArray()
+  // Use the same allowed global pool (filtered by learning_groups)
+  const messages = await loadAllMessages()
+  if (!Array.isArray(messages) || messages.length === 0) return ''
 
+  // Collect words from the pool
   const words = []
-  for (const doc of docs) {
-    if (!doc || !Array.isArray(doc.messages)) continue
-    for (const msg of doc.messages) {
-      if (typeof msg !== 'string') continue
-      const parts = msg.split(/\s+/).filter(Boolean)
-      for (const p of parts) {
-        words.push(p)
-      }
-    }
+  for (const msg of messages) {
+    if (typeof msg !== 'string') continue
+    const parts = msg.split(/\s+/).filter(Boolean)
+    for (const p of parts) words.push(p)
   }
 
   if (words.length === 0) return ''
-
   return words[Math.floor(Math.random() * words.length)]
 }

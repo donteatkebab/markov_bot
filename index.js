@@ -25,6 +25,10 @@ const defaultDebug = process.env.MARKOV_DEBUG !== '0'
 const MAX_BUFFER = 25
 const MIN_REPEAT_MS = 10 * 60 * 1000 // 10 minutes
 
+const TOPIC_RECENT_LIMIT = 10
+const TOPIC_KEY_TTL_MS = 3 * 60 * 1000 // 3 minutes per keyword
+const TOPIC_MAX_KEYWORDS = 6
+
 // Prevent storing identical consecutive messages per chat (RAM only)
 const lastStoredByChat = new Map()
 
@@ -35,6 +39,7 @@ function createBotState() {
     messageCountSinceRandom: new Map(),
     lastSent: new Map(),
     learningGroups: new Set(),
+    topicMemory: new Map(), // chatId -> { recent: [{ text, ts }], keyLastSeen: Map(keyword -> ts) }
   }
 }
 
@@ -135,6 +140,72 @@ function hasTooMuchEmoji(text) {
 
 function hasStretchedChars(text) {
   return /(.)\1{3,}/u.test(text) // حرف یا کلمه کشیده
+}
+
+const TOPIC_STOPWORDS = new Set([
+  'و', 'یا', 'که', 'به', 'از', 'در', 'با', 'برای', 'تا', 'این', 'اون', 'آن', 'من', 'تو', 'ما', 'شما', 'اونا', 'او', 'هم', 'همه',
+  'یه', 'یک', 'دیگه', 'ولی', 'چون', 'اگر', 'پس', 'رو', 'را', 'همین', 'اونم', 'اینجا', 'اونجا', 'الان', 'بعد', 'قبل',
+  'نه', 'آره', 'اره', 'چی', 'چیه', 'کجاست', 'چرا', 'چطور', 'چجوری', 'مگه', 'خب',
+  'باید', 'کرد', 'کن', 'می', 'میخوام', 'میخواد', 'میشه', 'شد', 'هست', 'نیست'
+])
+
+function tokenizeTopic(text) {
+  const t = normalizePersian(String(text || ''))
+  // remove most punctuation for matching; keep letters/numbers/spaces/emojis
+  const cleaned = t.replace(/[^\p{L}\p{N}\s]/gu, ' ')
+  return cleaned
+    .split(/\s+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .filter((x) => x.length >= 2)
+    .filter((x) => !TOPIC_STOPWORDS.has(x))
+}
+
+// Build/refresh keyword memory from last 10 messages; each keyword expires independently after TTL
+function updateTopicMemory(state, chatId, text) {
+  if (!text || typeof text !== 'string') return
+  const now = Date.now()
+
+  let entry = state.topicMemory.get(chatId)
+  if (!entry) {
+    entry = { recent: [], keyLastSeen: new Map() }
+    state.topicMemory.set(chatId, entry)
+  }
+
+  entry.recent.push({ text, ts: now })
+  if (entry.recent.length > TOPIC_RECENT_LIMIT) entry.recent.shift()
+
+  // Recompute keyword lastSeen from the recent window (max timestamp per keyword)
+  const nextLastSeen = new Map()
+  for (const item of entry.recent) {
+    const tokens = tokenizeTopic(item.text)
+    for (const tok of tokens) {
+      const prev = nextLastSeen.get(tok) || 0
+      if (item.ts > prev) nextLastSeen.set(tok, item.ts)
+    }
+  }
+
+  // Apply per-key TTL and replace the map
+  const pruned = new Map()
+  for (const [kw, ts] of nextLastSeen.entries()) {
+    if (now - ts <= TOPIC_KEY_TTL_MS) pruned.set(kw, ts)
+  }
+  entry.keyLastSeen = pruned
+}
+
+// Build a seed string from active keywords (most recently seen first)
+function getTopicSeed(state, chatId) {
+  const entry = state.topicMemory.get(chatId)
+  if (!entry || !entry.keyLastSeen || entry.keyLastSeen.size === 0) return ''
+  const now = Date.now()
+
+  const active = Array.from(entry.keyLastSeen.entries())
+    .filter(([, ts]) => now - ts <= TOPIC_KEY_TTL_MS)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, TOPIC_MAX_KEYWORDS)
+    .map(([kw]) => kw)
+
+  return active.join(' ')
 }
 
 async function addMessage(chatId, text) {
@@ -297,6 +368,11 @@ function registerTextHandler(bot, deps) {
     if (chat.type === 'group' || chat.type === 'supergroup') {
       state.knownGroups.add(chat.id)
 
+      // Topic memory is independent from training: we track last 10 user messages for better random talk.
+      if (!text.startsWith('/')) {
+        updateTopicMemory(state, chat.id, text)
+      }
+
       const isLearningGroup = state.learningGroups.has(chat.id)
 
       if (isLearningGroup) {
@@ -364,7 +440,19 @@ function startRandomTalker({
     const randomChatId =
       activeGroups[Math.floor(Math.random() * activeGroups.length)]
 
-    const { text } = await generateResponse(randomChatId)
+    const seed = getTopicSeed(state, randomChatId)
+
+    // If we have an active topic seed, generate a related Markov sentence; otherwise fallback to normal random response.
+    let text = ''
+    if (seed) {
+      text = await generateRelatedSentence(randomChatId, seed, undefined, {
+        log: defaultDebug,
+      })
+    } else {
+      const res = await generateResponse(randomChatId)
+      text = res?.text || ''
+    }
+
     if (!text) return
 
     try {
