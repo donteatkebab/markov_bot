@@ -9,6 +9,8 @@ import {
 // Safety guard to prevent runaway generation when maxWords is not provided.
 const MAX_GENERATION_GUARD = 200
 
+const DEBUG_MARKOV = process.env.DEBUG_MARKOV === '1'
+
 // Anti-recent-repeat buffer (RAM only): prevents sending the same sentence repeatedly
 const RECENT_SENT_MAX = 5
 const recentSentByChat = new Map()
@@ -55,7 +57,9 @@ export async function getCollections() {
     learningGroups: db.collection('learning_groups'),
   }
 
-  console.log('📦 MongoDB connected:', MONGO_DB_NAME, '/', MONGO_COLLECTION)
+  if (DEBUG_MARKOV) {
+    console.log('📦 MongoDB connected:', MONGO_DB_NAME, '/', MONGO_COLLECTION)
+  }
   return collections
 }
 
@@ -104,9 +108,9 @@ async function loadAllMessages() {
 
 function buildChainForOrder(messages, order) {
   const chain = {}
-  const startKeys = []
+  const startKeysSet = new Set()
   const prefixLen = order - 1
-  if (prefixLen < 1) return { chain, startKeys, order }
+  if (prefixLen < 1) return { chain, startKeys: [], order }
 
   for (const text of messages) {
     const normalized = text.trim()
@@ -115,7 +119,7 @@ function buildChainForOrder(messages, order) {
     const words = normalized.split(/\s+/).filter(Boolean)
     if (words.length < order) continue
 
-    startKeys.push(words.slice(0, prefixLen).join(' '))
+    startKeysSet.add(words.slice(0, prefixLen).join(' '))
 
     for (let i = 0; i <= words.length - order; i++) {
       const key = words.slice(i, i + prefixLen).join(' ')
@@ -125,7 +129,7 @@ function buildChainForOrder(messages, order) {
     }
   }
 
-  return { chain, startKeys, order }
+  return { chain, startKeys: Array.from(startKeysSet), order }
 }
 
 function chooseStartKey({ chain, startKeys }) {
@@ -193,22 +197,30 @@ function selectStart(chainData) {
   return chooseStitchedStart(chainData) || chooseStartKey(chainData)
 }
 
-function pickNext(nextList, prevWord, maxRepeatAttempts) {
+function pickNext(nextList, prevWord, recentPairs, maxRepeatAttempts) {
   if (!Array.isArray(nextList) || nextList.length === 0) return ''
-  let next = nextList[Math.floor(Math.random() * nextList.length)]
-  let attempts = 0
 
-  while (
-    prevWord &&
-    next === prevWord &&
-    attempts < maxRepeatAttempts &&
-    nextList.length > 1
-  ) {
-    next = nextList[Math.floor(Math.random() * nextList.length)]
-    attempts++
+  const hasRecent = Array.isArray(recentPairs) && recentPairs.length > 0
+  const maxTries = Math.max(3, (maxRepeatAttempts || 0) * 3)
+
+  // Try multiple times to find a next token that doesn't immediately loop
+  for (let tries = 0; tries < maxTries; tries++) {
+    const next = nextList[Math.floor(Math.random() * nextList.length)]
+
+    // 1) avoid repeating the exact previous word when possible
+    if (prevWord && next === prevWord && nextList.length > 1) continue
+
+    // 2) avoid repeating recent (prev,next) pairs when possible
+    if (hasRecent && prevWord) {
+      const pair = `${prevWord} ${next}`
+      if (recentPairs.includes(pair) && nextList.length > 1) continue
+    }
+
+    return next
   }
 
-  return next
+  // Fallback: return something (original behavior)
+  return nextList[Math.floor(Math.random() * nextList.length)]
 }
 
 function appendJump(result, jumpStart, wordLimit) {
@@ -241,6 +253,8 @@ function generateFromChain(
   const result = startKey.split(' ')
   const prefixLen = chainData.order - 1
   let hops = 0
+  const recentPairs = []
+  const RECENT_PAIR_MAX = 12
 
   for (let i = result.length; i < wordLimit; i++) {
     const len = result.length
@@ -259,9 +273,16 @@ function generateFromChain(
     }
 
     const prev = result.length > 0 ? result[result.length - 1] : ''
-    const next = pickNext(nextList, prev, maxRepeatAttempts)
+    const next = pickNext(nextList, prev, recentPairs, maxRepeatAttempts)
     if (!next) break
     result.push(next)
+
+    if (prev) {
+      recentPairs.push(`${prev} ${next}`)
+      if (recentPairs.length > RECENT_PAIR_MAX) {
+        recentPairs.splice(0, recentPairs.length - RECENT_PAIR_MAX)
+      }
+    }
 
     // جلوگیری از تکرارهای رگباری مثل "A A" که باعث اسپم و تکرار متن می‌شوند
     if (hasMultiWordTailLoop(result, 5)) break
@@ -372,7 +393,7 @@ function hasMultiWordTailLoop(wordArray, minBlockWords = 5) {
 export async function generateRandomSentence(
   chatId,
   maxWords,
-  { log = true } = {}
+  { log = false } = {}
 ) {
   const messages = await loadAllMessages()
   if (messages.length < 5) return ''
@@ -414,7 +435,7 @@ export async function generateRandomSentence(
     }
   }
 
-  if (finalSentence && log) {
+  if (finalSentence && log && DEBUG_MARKOV) {
     const used = chain ? `${GEN_CONFIG.order}-gram` : 'none'
     console.log(
       'MARKOV DEBUG:',

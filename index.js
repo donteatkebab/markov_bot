@@ -116,18 +116,56 @@ function collapseRepeatedHalves(text) {
   return current.join(' ')
 }
 
+function normalizePersian(text) {
+  return text
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/‌/g, ' ') // ZWNJ to space
+    .replace(/ـ+/g, '') // keshide
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function hasTooMuchEmoji(text) {
+  const emojiCount = (text.match(/[\p{Emoji}]/gu) || []).length
+  return emojiCount > 0 && emojiCount / text.length > 0.5
+}
+
+function hasStretchedChars(text) {
+  return /(.)\1{3,}/u.test(text) // حرف یا کلمه کشیده
+}
+
 async function addMessage(chatId, text) {
   if (typeof text !== 'string') return
+  text = normalizePersian(text)
+
+  // If message contains any Latin letters, skip storing (avoid mixing English content)
+  if (/[A-Za-z]/.test(text)) return
+
+  // If message contains any kind of link/mention, skip storing entirely
+  const hasLink =
+    /https?:\/\/\S+/i.test(text) ||
+    /www\.\S+/i.test(text) ||
+    /\b\S+\.(com|net|org|ir|io|me|app|xyz|info|site|online|shop|top)\b/i.test(text) ||
+    /t\.me\/\S+/i.test(text) ||
+    /telegram\.me\/\S+/i.test(text) ||
+    /@[a-zA-Z0-9_]{3,32}/.test(text)
+
+  if (hasLink) return
+
+  // Too short for learning (short jokes still need some structure)
+  if (text.length < 6) return
+
+  // Too long = monologue / rant
+  if (text.length > 350) return
+
+  // Emoji spam
+  if (hasTooMuchEmoji(text)) return
+
+  // کشیده‌نویسی یا تکرار افراطی
+  if (hasStretchedChars(text)) return
 
   let cleaned = text
-  cleaned = cleaned.replace(/https?:\/\/\S+/gi, '')
-  cleaned = cleaned.replace(/www\.\S+/gi, '')
-  cleaned = cleaned.replace(
-    /\b\S+\.(com|net|org|ir|io|me|app|xyz|info|site|online|shop|top)\S*/gi,
-    ''
-  )
-  cleaned = cleaned.replace(/@[a-zA-Z0-9_]{3,32}/g, '')
-  cleaned = cleaned.replace(/\s+/g, ' ').trim()
 
   if (!cleaned || cleaned.length < 2) return
 
