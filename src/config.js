@@ -34,6 +34,6 @@ export const RANDOM_REPLY_CHANCE = 0.01
 export const DAILY_TIMEZONE = 'Asia/Tehran'
 
 export const GEN_CONFIG = {
-  order: 4,
+  order: 3,
   maxHops: 1,
 }

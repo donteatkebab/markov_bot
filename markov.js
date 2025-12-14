@@ -583,7 +583,7 @@ export async function generateRelatedSentence(
 
   // Take top-K. Keep it bounded for speed + style consistency.
   const topK = scored.slice(0, 140).map((x) => x.m)
-  if (topK.length < 12) {
+  if (topK.length < 6) {
     // not enough related examples
     return generateRandomSentence(chatId, maxWords, { log, isReplyFallback: true })
   }
