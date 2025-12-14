@@ -17,7 +17,7 @@ import {
 } from './src/config.js'
 import {
   generateRandomSentence,
-  generateRelatedSentence,
+  generateContextualSentence,
   getCollections,
 } from './markov.js'
 
@@ -172,36 +172,55 @@ function updateTopicMemory(state, chatId, text) {
     state.topicMemory.set(chatId, entry)
   }
 
+  // Keep last 10 messages (for keyword frequency extraction)
   entry.recent.push({ text, ts: now })
   if (entry.recent.length > TOPIC_RECENT_LIMIT) entry.recent.shift()
 
-  // Recompute keyword lastSeen from the recent window (max timestamp per keyword)
-  const nextLastSeen = new Map()
-  for (const item of entry.recent) {
-    const tokens = tokenizeTopic(item.text)
-    for (const tok of tokens) {
-      const prev = nextLastSeen.get(tok) || 0
-      if (item.ts > prev) nextLastSeen.set(tok, item.ts)
-    }
+  // Update per-key lastSeen independently (true per-key TTL)
+  const tokens = tokenizeTopic(text)
+  for (const tok of tokens) {
+    entry.keyLastSeen.set(tok, now)
   }
 
-  // Apply per-key TTL and replace the map
-  const pruned = new Map()
-  for (const [kw, ts] of nextLastSeen.entries()) {
-    if (now - ts <= TOPIC_KEY_TTL_MS) pruned.set(kw, ts)
+  // Prune expired keys
+  for (const [kw, ts] of entry.keyLastSeen.entries()) {
+    if (now - ts > TOPIC_KEY_TTL_MS) entry.keyLastSeen.delete(kw)
   }
-  entry.keyLastSeen = pruned
 }
 
-// Build a seed string from active keywords (most recently seen first)
+// Build a seed string from active keywords (frequency in last 10 messages, only if lastSeen within TTL)
 function getTopicSeed(state, chatId) {
   const entry = state.topicMemory.get(chatId)
   if (!entry || !entry.keyLastSeen || entry.keyLastSeen.size === 0) return ''
   const now = Date.now()
 
-  const active = Array.from(entry.keyLastSeen.entries())
-    .filter(([, ts]) => now - ts <= TOPIC_KEY_TTL_MS)
-    .sort((a, b) => b[1] - a[1])
+  // Prune expired keys here too (in case no new messages arrived)
+  for (const [kw, ts] of entry.keyLastSeen.entries()) {
+    if (now - ts > TOPIC_KEY_TTL_MS) entry.keyLastSeen.delete(kw)
+  }
+  if (entry.keyLastSeen.size === 0) return ''
+
+  // Count keyword frequency in the last 10 messages
+  const counts = new Map()
+  for (const item of entry.recent) {
+    const toks = tokenizeTopic(item.text)
+    for (const t of toks) {
+      // Only count tokens that are still active by TTL
+      if (!entry.keyLastSeen.has(t)) continue
+      counts.set(t, (counts.get(t) || 0) + 1)
+    }
+  }
+
+  // Pick by frequency, break ties by recency (lastSeen)
+  const active = Array.from(counts.entries())
+    .sort((a, b) => {
+      const ca = a[1]
+      const cb = b[1]
+      if (cb !== ca) return cb - ca
+      const ta = entry.keyLastSeen.get(a[0]) || 0
+      const tb = entry.keyLastSeen.get(b[0]) || 0
+      return tb - ta
+    })
     .slice(0, TOPIC_MAX_KEYWORDS)
     .map(([kw]) => kw)
 
@@ -396,9 +415,13 @@ function registerTextHandler(bot, deps) {
         const shouldReply = isReplyToBot || Math.random() < RANDOM_REPLY_CHANCE
 
         if (shouldReply) {
-          // Related reply: use the user's message as the seed, but still generate Markov (not a copy)
-          const sentence = await generateRelatedSentence(chat.id, text, undefined, {
+          // Unified contextual generation (reply seed): still Markov, not a copy
+          const sentence = await generateContextualSentence({
+            chatId: chat.id,
+            seedText: text,
+            maxWords: undefined,
             log: defaultDebug,
+            reason: 'reply',
           })
 
           if (sentence) {
@@ -442,11 +465,15 @@ function startRandomTalker({
 
     const seed = getTopicSeed(state, randomChatId)
 
-    // If we have an active topic seed, generate a related Markov sentence; otherwise fallback to normal random response.
+    // If we have an active topic seed, generate a contextual Markov sentence; otherwise fallback to normal random response.
     let text = ''
     if (seed) {
-      text = await generateRelatedSentence(randomChatId, seed, undefined, {
+      text = await generateContextualSentence({
+        chatId: randomChatId,
+        seedText: seed,
+        maxWords: undefined,
         log: defaultDebug,
+        reason: 'topic',
       })
     } else {
       const res = await generateResponse(randomChatId)

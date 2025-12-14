@@ -514,18 +514,29 @@ export async function generateRelatedSentence(
     }
   }
 
+  // Prefer keywords that actually exist in the pool (df > 0)
+  const presentKw = candidateKw.filter((kw) => (df.get(kw) || 0) > 0)
+
   // weights: rarer keywords get higher weight; also prefer longer tokens a bit
   const weights = new Map()
   for (const kw of candidateKw) {
-    const d = df.get(kw) || 0
+    let d = df.get(kw) || 0
+    // If keyword doesn't appear anywhere, don't let it dominate selection
+    if (d === 0) d = 50
     const w = (1 / Math.sqrt(d + 1)) * Math.min(2.2, 1 + kw.length / 6)
     weights.set(kw, w)
   }
 
-  // pick top keywords by weight
-  const keywords = Array.from(candidateKw)
+  // pick top keywords by weight (prefer ones that exist in the pool)
+  const keywordBase = presentKw.length > 0 ? presentKw : candidateKw
+
+  const keywords = Array.from(keywordBase)
     .sort((a, b) => (weights.get(b) || 0) - (weights.get(a) || 0))
     .slice(0, MAX_KEYWORDS)
+
+  if (keywords.length === 0) {
+    return generateRandomSentence(chatId, maxWords, { log, isReplyFallback: true })
+  }
 
   // 2) Build seed grams for backoff (prefer 3-gram, then 2-gram, then 1-gram tokens)
   const seed3grams = seed3
@@ -716,6 +727,7 @@ export async function generateRandomSentence(
   return finalSentence
 }
 
+
 export async function generateRandomWord(chatId) {
   // Use the same allowed global pool (filtered by learning_groups)
   const messages = await loadAllMessages()
@@ -731,4 +743,90 @@ export async function generateRandomWord(chatId) {
 
   if (words.length === 0) return ''
   return words[Math.floor(Math.random() * words.length)]
+}
+
+// ------------------------------
+// Topic seed + unified contextual generation
+// ------------------------------
+
+/**
+ * Build a topic seed from recent texts (e.g., last 10 messages in a chat).
+ * This does NOT store anything and does NOT manage TTL. TTL remains in index.js.
+ * It simply extracts frequent meaningful tokens using the same reply-style tokenizer.
+ */
+export function buildTopicSeedFromRecentTexts(recentTexts, { maxKeywords = 6 } = {}) {
+  if (!Array.isArray(recentTexts) || recentTexts.length === 0) return ''
+
+  const counts = new Map()
+
+  for (const t of recentTexts) {
+    if (typeof t !== 'string') continue
+    const tokens = tokenizeForMatch(t)
+    for (const tok of tokens) {
+      counts.set(tok, (counts.get(tok) || 0) + 1)
+    }
+  }
+
+  if (counts.size === 0) return ''
+
+  // Rank by frequency, then by token length (slight preference for more specific tokens)
+  const ranked = Array.from(counts.entries())
+    .sort((a, b) => {
+      const ca = a[1]
+      const cb = b[1]
+      if (cb !== ca) return cb - ca
+      return b[0].length - a[0].length
+    })
+    .slice(0, Math.max(1, maxKeywords))
+    .map(([kw]) => kw)
+
+  return ranked.join(' ')
+}
+
+/**
+ * Generate a topic-aware Markov sentence using recentTexts as context (no DB topic memory here).
+ * If seed becomes empty, falls back to normal random generation (NOT counted as reply fallback).
+ */
+export async function generateTopicSentence(chatId, recentTexts, maxWords, { log = false } = {}) {
+  const seed = buildTopicSeedFromRecentTexts(recentTexts, { maxKeywords: 6 })
+  if (!seed) {
+    return generateRandomSentence(chatId, maxWords, { log, isReplyFallback: false })
+  }
+
+  const text = await generateRelatedSentence(chatId, seed, maxWords, { log })
+  if (text && log && DEBUG_MARKOV) {
+    console.log('MARKOV TOPIC DEBUG:', chatId, 'seed:', seed)
+  }
+  return text
+}
+
+/**
+ * Unified entry point:
+ * - If seedText is provided (reply/manual), uses it.
+ * - Else uses recentTexts (topic) to build a seed.
+ * Falls back to normal random generation if needed.
+ */
+export async function generateContextualSentence({
+  chatId,
+  seedText = '',
+  recentTexts = [],
+  maxWords,
+  log = false,
+  reason = '',
+} = {}) {
+  const seed = seedText ? normalizePersianLite(seedText) : buildTopicSeedFromRecentTexts(recentTexts, { maxKeywords: 6 })
+
+  if (!seed) {
+    const out = await generateRandomSentence(chatId, maxWords, { log, isReplyFallback: false })
+    if (out && log && DEBUG_MARKOV) {
+      console.log('MARKOV CONTEXT DEBUG: FALLBACK', chatId, 'reason:', reason || 'unknown')
+    }
+    return out
+  }
+
+  const out = await generateRelatedSentence(chatId, seed, maxWords, { log })
+  if (out && log && DEBUG_MARKOV) {
+    console.log('MARKOV CONTEXT DEBUG: OK', chatId, 'reason:', reason || 'unknown', 'seedLen:', seed.length)
+  }
+  return out
 }
