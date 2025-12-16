@@ -34,6 +34,7 @@ const lastStoredByChat = new Map()
 
 function createBotState() {
   return {
+    startedAtSec: Math.floor(Date.now() / 1000),
     knownGroups: new Set(),
     lastMessageTime: new Map(),
     messageCountSinceRandom: new Map(),
@@ -342,6 +343,10 @@ function registerCommandHandlers(bot, deps) {
   } = deps
 
   bot.command(botStrings.TRAIN_CMD, async (ctx) => {
+    // Ignore commands that were sent while the bot was offline (Telegram queued update)
+    if (ctx.message && typeof ctx.message.date === 'number') {
+      if (ctx.message.date < state.startedAtSec) return
+    }
     if (ctx.from.id !== ownerId) return
     if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
@@ -355,6 +360,10 @@ function registerCommandHandlers(bot, deps) {
   })
 
   bot.command(botStrings.UNTRAIN_CMD, async (ctx) => {
+    // Ignore commands that were sent while the bot was offline (Telegram queued update)
+    if (ctx.message && typeof ctx.message.date === 'number') {
+      if (ctx.message.date < state.startedAtSec) return
+    }
     if (ctx.from.id !== ownerId) return
     if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
@@ -368,6 +377,10 @@ function registerCommandHandlers(bot, deps) {
   })
 
   bot.command(botStrings.TALK_CMD, async (ctx) => {
+    // Ignore commands that were sent while the bot was offline (Telegram queued update)
+    if (ctx.message && typeof ctx.message.date === 'number') {
+      if (ctx.message.date < state.startedAtSec) return
+    }
     if (ctx.from.id !== ownerId) return
     if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return
 
@@ -396,6 +409,8 @@ function registerTextHandler(bot, deps) {
     const msg = ctx.message
     const text = msg.text
     if (!text) return
+    // Ignore messages that were sent while the bot was offline (Telegram queued update)
+    if (typeof msg.date === 'number' && msg.date < state.startedAtSec) return
 
     if (msg.from && msg.from.is_bot) {
       return
@@ -616,7 +631,7 @@ async function main() {
 
   startHealthServer(PORT)
 
-  await botInstance.launch()
+  await botInstance.launch({ dropPendingUpdates: true })
   console.log('🤖 Bot started...')
 }
 
