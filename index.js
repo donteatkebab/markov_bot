@@ -230,9 +230,23 @@ function getTopicSeed(state, chatId) {
 async function addMessage(chatId, text) {
   if (typeof text !== 'string') return
   text = normalizePersian(text)
+  const MAX_WORD_LEN = 11
+  const MAX_AVG_WORD_LEN = 6.5
 
   // If message contains any Latin letters, skip storing (avoid mixing English content)
   if (/[A-Za-z]/.test(text)) return
+
+  const words = text.split(/\s+/).filter(Boolean)
+  if (words.length === 0) return
+
+  // If any single word is too long → not troll-like
+  if (words.some((w) => w.length > MAX_WORD_LEN)) return
+
+  // Average word length guard (filters formal/essay-like text)
+  const avgWordLen =
+    words.reduce((sum, w) => sum + w.length, 0) / words.length
+
+  if (avgWordLen > MAX_AVG_WORD_LEN) return
 
   // If message contains any kind of link/mention, skip storing entirely
   const hasLink =
@@ -249,13 +263,16 @@ async function addMessage(chatId, text) {
   if (text.length < 6) return
 
   // Too long = monologue / rant
-  if (text.length > 350) return
+  if (text.length > 220) return
 
   // Emoji spam
   if (hasTooMuchEmoji(text)) return
 
   // کشیده‌نویسی یا تکرار افراطی
   if (hasStretchedChars(text)) return
+
+  // Filter formal / essay-like Persian phrases
+  if (/(لذا|بدین|می‌باشد|میباشد|نتیجه‌گیری|ساختار|تحلیل)/.test(text)) return
 
   let cleaned = text
 
