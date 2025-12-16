@@ -25,7 +25,7 @@ export const MONGO_COLLECTION = 'groups'
 
 export const PORT = Number(process.env.PORT || 3000)
 
-export const RANDOM_TALK_CHANCE = 0.08
+export const RANDOM_TALK_CHANCE = 0.05
 export const RANDOM_TALK_INTERVAL_MS = 60 * 1000
 export const RANDOM_TALK_ACTIVE_WINDOW_MS = 15 * 60 * 1000
 export const RANDOM_TALK_REQUIRED_MESSAGES = 10
